@@ -7,3 +7,6 @@
 [submodule "3rdParty/NVTX"]
 	path = 3rdParty/NVTX
 	url = https://github.com/NVIDIA/NVTX.git
+[submodule "Qwen3-VL-2B-Instruct"]
+	path = Qwen3-VL-2B-Instruct
+	url = https://huggingface.co/Qwen/Qwen3-VL-2B-Instruct
