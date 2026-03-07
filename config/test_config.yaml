@@ -1,0 +1,142 @@
+# Test Configuration for Qwen3-VL-2B-Instruct Performance Test
+# TensorRT Edge-LLM Test Suite
+
+# Device configuration
+device:
+  name: "Jetson AGX Orin"
+  gpu_memory: 32GB
+  cpu_cores: 12
+  power_mode: "MAXN"
+
+# Model configuration
+model:
+  name: "Qwen3-VL-2B-Instruct"
+  precision: "FP16"
+  tensorrt_engine_path: "./engines/qwen3_vl_2b_fp16.engine"
+  max_batch_size: 4
+  max_input_len: 4096
+  max_output_len: 1024
+
+# Test case configurations
+test_cases:
+  # Single request latency test
+  single_request:
+    enabled: true
+    description: "Single request end-to-end latency test"
+    input_file: "test_cases/single_request.json"
+    iterations: 10
+    metrics: ["latency", "gpu_memory", "cpu_memory", "utilization"]
+
+  # Concurrent requests throughput test
+  concurrent_requests:
+    enabled: true
+    description: "Concurrent requests throughput test"
+    input_file: "test_cases/concurrent_requests.json"
+    concurrency_levels: [1, 2, 4, 8]
+    duration_per_level: 30
+    metrics: ["throughput", "latency_distribution", "gpu_utilization"]
+
+  # Multi-modal input test
+  multi_modal:
+    enabled: true
+    description: "Multi-modal (image + text) inference test"
+    input_file: "test_cases/multi_modal.json"
+    image_resolutions: ["640x480", "1024x768", "1920x1080"]
+    metrics: ["latency", "gpu_memory", "encoding_time"]
+
+  # Cold start test
+  cold_start:
+    enabled: true
+    description: "Engine cold start and initialization test"
+    iterations: 5
+    unload_engine_between_runs: true
+    metrics: ["initialization_time", "first_token_latency"]
+
+  # Stability test
+  stability:
+    enabled: true
+    description: "Long-running stability test"
+    duration: 300
+    request_interval: 1
+    metrics: ["latency_degradation", "memory_leak", "error_rate"]
+
+  # Power efficiency test
+  power_efficiency:
+    enabled: true
+    description: "Power consumption and efficiency test"
+    duration: 60
+    metrics: ["power_consumption", "energy_per_token", "efficiency_ratio"]
+
+  # Input length variation test
+  input_length_variation:
+    enabled: true
+    description: "Performance with different input token lengths"
+    input_lengths: [128, 256, 512, 1024]
+    output_length: 128
+    metrics: ["prefill_time", "latency", "throughput"]
+
+  # Output length variation test
+  output_length_variation:
+    enabled: true
+    description: "Performance with different output token lengths"
+    input_length: 128
+    output_lengths: [32, 64, 128, 512]
+    metrics: ["generation_time", "token_rate", "latency"]
+
+  # Image resolution variation test
+  image_resolution_variation:
+    enabled: true
+    description: "Performance with different image resolutions"
+    resolutions: ["640x480", "1024x768", "1920x1080", "2560x1440"]
+    metrics: ["image_encoding_time", "total_latency", "gpu_memory"]
+
+  # Parameter sensitivity test
+  parameter_sensitivity:
+    enabled: true
+    description: "Performance impact of different inference parameters"
+    parameters:
+      temperature: [0.1, 0.7, 1.0]
+      top_p: [0.1, 0.5, 0.9]
+      max_new_tokens: [64, 128, 256]
+    metrics: ["token_rate", "latency", "generation_quality"]
+
+# Metrics collection configuration
+metrics:
+  collection_interval: 100ms
+  gpu_metrics:
+    - utilization
+    - memory_used
+    - memory_free
+    - power_draw
+    - temperature
+  cpu_metrics:
+    - utilization_per_core
+    - memory_used
+    - memory_free
+    - load_average
+  inference_metrics:
+    - total_latency
+    - prefill_latency
+    - generation_latency
+    - first_token_latency
+    - tokens_per_second
+    - input_tokens
+    - output_tokens
+    - error_count
+
+# Report configuration
+report:
+  formats: ["markdown", "html", "json"]
+  include_charts: true
+  include_statistics:
+    - mean
+    - median
+    - p50
+    - p90
+    - p95
+    - p99
+    - min
+    - max
+    - std_dev
+  compare_with_baseline: true
+  baseline_file: "config/baseline_performance.yaml"

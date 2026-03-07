@@ -1,0 +1,40 @@
+{
+  "test_case": "concurrent_requests",
+  "description": "Concurrent request throughput test",
+  "request_templates": [
+    {
+      "text": "What are the advantages of edge AI computing?",
+      "parameters": {
+        "temperature": 0.7,
+        "top_p": 0.9,
+        "max_new_tokens": 64
+      }
+    },
+    {
+      "text": "Explain quantum computing in simple terms.",
+      "parameters": {
+        "temperature": 0.7,
+        "top_p": 0.9,
+        "max_new_tokens": 64
+      }
+    },
+    {
+      "text": "What are the key features of TensorRT?",
+      "parameters": {
+        "temperature": 0.7,
+        "top_p": 0.9,
+        "max_new_tokens": 64
+      }
+    },
+    {
+      "text": "Describe the applications of computer vision in autonomous driving.",
+      "parameters": {
+        "temperature": 0.7,
+        "top_p": 0.9,
+        "max_new_tokens": 64
+      }
+    }
+  ],
+  "concurrency_levels": [1, 2, 4, 8],
+  "test_duration_per_level": 30
+}

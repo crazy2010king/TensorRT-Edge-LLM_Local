@@ -1,0 +1,36 @@
+{
+  "test_case": "multi_modal",
+  "description": "Multi-modal (image + text) inference test",
+  "test_cases": [
+    {
+      "name": "scene_description",
+      "image": "test_data/images/scene_640x480.jpg",
+      "text": "Describe what you see in this image in detail.",
+      "parameters": {
+        "temperature": 0.7,
+        "top_p": 0.9,
+        "max_new_tokens": 128
+      }
+    },
+    {
+      "name": "ocr_test",
+      "image": "test_data/images/document_1024x768.jpg",
+      "text": "Extract all text from this image.",
+      "parameters": {
+        "temperature": 0.1,
+        "top_p": 0.3,
+        "max_new_tokens": 256
+      }
+    },
+    {
+      "name": "object_detection",
+      "image": "test_data/images/street_1920x1080.jpg",
+      "text": "List all objects you can identify in this street scene.",
+      "parameters": {
+        "temperature": 0.7,
+        "top_p": 0.9,
+        "max_new_tokens": 128
+      }
+    }
+  ]
+}
