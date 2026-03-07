@@ -40,11 +40,12 @@ fi
 
 # Function to calculate statistics for a metric
 calculate_stats() {
-    local data_file="$1"
-    local metric="$2"
+    local data_dir="$1"
+    local test_case="$2"
+    local metric="$3"
 
-    # Extract all values
-    values=$(jq -r ".metrics.$metric" "$data_file"/*_run_*.json 2>/dev/null | grep -v null | sort -g)
+    # Extract all values for specific test case
+    values=$(jq -r ".metrics.$metric" "$data_dir/${test_case}_run_"*.json 2>/dev/null | grep -v null | sort -g)
 
     if [[ -z "$values" ]]; then
         echo "{}"
@@ -89,15 +90,16 @@ calculate_stats() {
 
 # Process all test cases
 ALL_RESULTS="{}"
-TEST_CASES=$(ls "$RAW_DATA_DIR"/*_run_*.json 2>/dev/null | xargs basename 2>/dev/null | cut -d'_' -f1 | sort | uniq || true)
+# 修复测试用例名称提取逻辑，支持包含下划线的测试用例名
+TEST_CASES=$(ls "$RAW_DATA_DIR"/*_run_*.json 2>/dev/null | xargs -n1 basename 2>/dev/null | sed 's/_run_[0-9]*\.json$//' | sort | uniq || true)
 
 for TEST_CASE in $TEST_CASES; do
     echo "Processing test case: $TEST_CASE"
 
     # Calculate metrics for this test case
-    latency_stats=$(calculate_stats "$RAW_DATA_DIR" "total_latency")
-    tps_stats=$(calculate_stats "$RAW_DATA_DIR" "tokens_per_second")
-    first_token_stats=$(calculate_stats "$RAW_DATA_DIR" "first_token_latency")
+    latency_stats=$(calculate_stats "$RAW_DATA_DIR" "$TEST_CASE" "total_latency")
+    tps_stats=$(calculate_stats "$RAW_DATA_DIR" "$TEST_CASE" "tokens_per_second")
+    first_token_stats=$(calculate_stats "$RAW_DATA_DIR" "$TEST_CASE" "first_token_latency")
 
     # Add to results
     ALL_RESULTS=$(echo "$ALL_RESULTS" | jq \

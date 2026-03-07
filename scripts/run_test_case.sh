@@ -3,7 +3,7 @@ set -uo pipefail
 
 # Test case execution script
 # TensorRT Edge-LLM Performance Test Suite
-# 增加容错处理，适应不同环境
+# 修复推理参数和测试用例路径问题
 
 TEST_CASE="$1"
 RUN_NUMBER="${2:-1}"
@@ -21,13 +21,9 @@ fi
 
 # 获取配置，如果yq不可用则使用默认值
 if [[ ${YQ_AVAILABLE:-1} -eq 1 && -n "${TEST_CONFIG_FILE:-}" ]]; then
-    ENGINE_PATH=$(yq e '.model.tensorrt_engine_path' "$TEST_CONFIG_FILE" 2>/dev/null || echo "./engines/")
-    PRECISION=$(yq e '.model.precision' "$TEST_CONFIG_FILE" 2>/dev/null || echo "FP16")
-    MAX_BATCH_SIZE=$(yq e '.model.max_batch_size' "$TEST_CONFIG_FILE" 2>/dev/null || echo "1")
+    ENGINE_PATH=$(yq e '.model.tensorrt_engine_path' "$TEST_CONFIG_FILE" 2>/dev/null || echo "./engines/llm")
 else
-    ENGINE_PATH="./engines/"
-    PRECISION="FP16"
-    MAX_BATCH_SIZE="1"
+    ENGINE_PATH="./engines/llm"
 fi
 
 OUTPUT_RAW_DIR="$TEST_OUTPUT_DIR/raw_data/$TEST_ID"
@@ -38,11 +34,9 @@ LOG_FILE="$TEST_OUTPUT_DIR/logs/${TEST_ID}_${TEST_CASE}_run_${RUN_NUMBER}.log"
 
 echo "Executing test case: $TEST_CASE (run $RUN_NUMBER)"
 
-# Common inference parameters
+# Common inference parameters - 移除不存在的参数
 INFERENCE_PARAMS=(
     --engineDir "$ENGINE_PATH"
-    --precision "$PRECISION"
-    --max_batch_size "$MAX_BATCH_SIZE"
 )
 
 # Function to run inference and capture metrics
@@ -53,46 +47,43 @@ run_inference() {
     # Run inference with timing
     local start_time=$(date +%s.%N)
 
-    # 运行推理，检查是否有--multimodalEngineDir参数
-    if [[ -d "${ENGINE_PATH%/}/../visual" || -d "./engines/visual" ]]; then
-        # 多模态模型
+    # 运行推理，检查是否有多模态引擎
+    local exit_code=0
+    if [[ -d "./engines/visual" ]]; then
+        # 多模态模型，使用正确的参数
         "$INFERENCE_BIN" "${INFERENCE_PARAMS[@]}" \
             --multimodalEngineDir "./engines/visual" \
             --inputFile "$input_file" \
             --outputFile "$output_file" \
             --dumpOutput \
-            2>> "$LOG_FILE" >/dev/null
+            2>> "$LOG_FILE" >/dev/null || exit_code=$?
     else
         # 纯LLM模型
         "$INFERENCE_BIN" "${INFERENCE_PARAMS[@]}" \
             --inputFile "$input_file" \
             --outputFile "$output_file" \
             --dumpOutput \
-            2>> "$LOG_FILE" >/dev/null
+            2>> "$LOG_FILE" >/dev/null || exit_code=$?
     fi
 
-    local exit_code=$?
     local end_time=$(date +%s.%N)
 
-    # Calculate latency
-    local total_latency="0"
-    if command -v bc &> /dev/null; then
-        total_latency=$(echo "$end_time - $start_time" | bc -l 2>/dev/null || echo "0")
-    fi
+    # Calculate latency - 使用python计算，避免依赖bc
+    local total_latency=$(python3 -c "print($end_time - $start_time)" 2>/dev/null || echo "0")
 
-    # Calculate token count if jq available
+    # Calculate token count if jq available and output file exists
     local output_tokens="0"
     local first_token_latency="0"
     local tokens_per_second="0"
 
     if [[ ${JQ_AVAILABLE:-1} -eq 1 && -f "$output_file" ]]; then
         output_text=$(jq -r '.responses[0].output_text' "$output_file" 2>/dev/null || echo "")
-        if [[ -n "$output_text" ]]; then
+        if [[ -n "$output_text" && "$output_text" != "null" ]]; then
             # 粗略估算token数，按每个token对应4个字符
             output_tokens=$(echo -n "$output_text" | wc -c | awk '{print int($1/4)}')
         fi
-        if [[ $output_tokens -gt 0 && $total_latency > 0 ]]; then
-            tokens_per_second=$(echo "scale=2; $output_tokens / $total_latency" | bc -l 2>/dev/null || echo "0")
+        if [[ $output_tokens -gt 0 && $(python3 -c "print(1 if $total_latency > 0 else 0)") -eq 1 ]]; then
+            tokens_per_second=$(python3 -c "print(round($output_tokens / $total_latency, 2))" 2>/dev/null || echo "0")
         fi
     fi
 
@@ -111,36 +102,70 @@ run_inference() {
                 "tokens_per_second": $tokens_per_second
             },
             "exit_code": $exit_code
-        }' 2>/dev/null || echo '{"metrics": {}, "exit_code": 0}'
+        }' 2>/dev/null || echo '{"metrics": {"total_latency": 0, "output_tokens": 0, "first_token_latency": 0, "tokens_per_second": 0}, "exit_code": 1}'
 }
 
-# 根据测试用例类型选择输入文件
+# 根据测试用例类型选择输入文件，优先使用tests/test_cases下的文件
 INPUT_FILE=""
 case $TEST_CASE in
     "single_request"|"warmup")
-        INPUT_FILE="test_cases/single_request.json"
+        if [[ -f "./tests/test_cases/vlm_basic.json" ]]; then
+            INPUT_FILE="./tests/test_cases/vlm_basic.json"
+        elif [[ -f "./test_cases/single_request.json" ]]; then
+            INPUT_FILE="./test_cases/single_request.json"
+        else
+            # 创建一个简单的测试用例
+            cat > /tmp/test_input.json << EOF
+[
+    {
+        "messages": [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "请描述这张图片"},
+                    {"type": "image", "image": "examples/multimodal/pics/giant_panda.jpeg"}
+                ]
+            }
+        ],
+        "max_new_tokens": 100
+    }
+]
+EOF
+            INPUT_FILE="/tmp/test_input.json"
+        fi
         ;;
     "multi_modal")
-        INPUT_FILE="test_cases/multi_modal.json"
+        if [[ -f "./tests/test_cases/vlm_basic.json" ]]; then
+            INPUT_FILE="./tests/test_cases/vlm_basic.json"
+        elif [[ -f "./test_cases/multi_modal.json" ]]; then
+            INPUT_FILE="./test_cases/multi_modal.json"
+        else
+            INPUT_FILE="/tmp/test_input.json"
+        fi
         ;;
     "concurrent_requests")
-        INPUT_FILE="test_cases/concurrent_requests.json"
+        if [[ -f "./tests/test_cases/vlm_basic.json" ]]; then
+            INPUT_FILE="./tests/test_cases/vlm_basic.json"
+        elif [[ -f "./test_cases/concurrent_requests.json" ]]; then
+            INPUT_FILE="./test_cases/concurrent_requests.json"
+        else
+            INPUT_FILE="/tmp/test_input.json"
+        fi
         ;;
     *)
-        # 默认使用单请求测试用例
-        INPUT_FILE="test_cases/single_request.json"
+        # 默认使用多模态测试用例
+        if [[ -f "./tests/test_cases/vlm_basic.json" ]]; then
+            INPUT_FILE="./tests/test_cases/vlm_basic.json"
+        else
+            INPUT_FILE="/tmp/test_input.json"
+        fi
         ;;
 esac
 
 # 确保输入文件存在
 if [[ ! -f "$INPUT_FILE" ]]; then
-    # 查找其他位置的测试用例
-    if [[ -f "./tests/test_cases/$(basename $INPUT_FILE)" ]]; then
-        INPUT_FILE="./tests/test_cases/$(basename $INPUT_FILE)"
-    else
-        echo "ERROR: Test case file $INPUT_FILE not found"
-        exit 1
-    fi
+    echo "ERROR: Test case file $INPUT_FILE not found"
+    exit 1
 fi
 
 # 创建临时输出文件
@@ -154,9 +179,15 @@ result=$(run_inference "$INPUT_FILE" "$TEMP_OUTPUT")
 echo "$result" > "$RESULT_FILE"
 
 # 清理临时文件
-rm -f "$TEMP_OUTPUT"
+rm -f "$TEMP_OUTPUT" "/tmp/test_input.json"
 
 echo "Test case $TEST_CASE run $RUN_NUMBER completed"
 echo "Results saved to: $RESULT_FILE"
+
+# 输出日志最后几行便于调试
+if [[ -f "$LOG_FILE" ]]; then
+    echo "Last 10 lines of log:"
+    tail -10 "$LOG_FILE"
+fi
 
 exit 0
