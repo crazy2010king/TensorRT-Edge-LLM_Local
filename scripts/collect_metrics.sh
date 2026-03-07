@@ -11,8 +11,19 @@ TEST_ID="$3"
 OUTPUT_RAW_DIR="$TEST_OUTPUT_DIR/raw_data/$TEST_ID"
 METRICS_FILE="$OUTPUT_RAW_DIR/${TEST_CASE}_system_metrics.csv"
 PID_FILE="/tmp/metrics_collector_${TEST_CASE}_${TEST_ID}.pid"
-COLLECTION_INTERVAL_MS=$(yq e '.metrics.collection_interval' "$TEST_CONFIG_FILE" | sed 's/ms//')
-COLLECTION_INTERVAL=$(echo "scale=3; $COLLECTION_INTERVAL_MS / 1000" | bc)
+# 获取采集间隔，如果yq不可用则使用默认值100ms
+if [[ ${YQ_AVAILABLE:-1} -eq 1 && -n "${TEST_CONFIG_FILE:-}" ]]; then
+    COLLECTION_INTERVAL_MS=$(yq e '.metrics.collection_interval' "$TEST_CONFIG_FILE" 2>/dev/null | sed 's/ms//' || echo "100")
+else
+    COLLECTION_INTERVAL_MS="100"
+fi
+
+# 计算采集间隔秒数，如果bc不可用则使用默认值0.1
+if command -v bc &> /dev/null; then
+    COLLECTION_INTERVAL=$(echo "scale=3; $COLLECTION_INTERVAL_MS / 1000" | bc)
+else
+    COLLECTION_INTERVAL="0.1"
+fi
 
 mkdir -p "$OUTPUT_RAW_DIR"
 

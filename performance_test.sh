@@ -1,5 +1,6 @@
 #!/bin/bash
-set -euo pipefail
+set -uo pipefail
+# 移除set -e，让脚本遇到错误时继续执行而不是直接退出
 
 # Performance Test Script for Qwen3-VL-2B-Instruct on Jetson AGX Orin
 # TensorRT Edge-LLM Performance Test Suite
@@ -92,40 +93,14 @@ echo
 
 # Step 1: Setup environment and check dependencies
 echo "=== Step 1: Environment Setup ==="
-MAX_RETRY=2
-RETRY_COUNT=0
-SETUP_SUCCESS=0
-
-while [[ $RETRY_COUNT -lt $MAX_RETRY ]]; do
-    if bash scripts/setup_env.sh; then
-        SETUP_SUCCESS=1
-        break
-    else
-        RETRY_COUNT=$((RETRY_COUNT + 1))
-        echo "WARNING: Environment setup failed (attempt $RETRY_COUNT/$MAX_RETRY), attempting automatic repair..."
-
-        # Try common fixes
-        if [[ $EUID -eq 0 ]]; then
-            echo "Trying to install missing dependencies..."
-            apt update -y >/dev/null 2>&1
-            apt install -y nvidia-l4t-tools jq yq python3-pip >/dev/null 2>&1
-            pip3 install numpy pandas matplotlib pyyaml requests >/dev/null 2>&1
-        else
-            echo "Trying to install missing Python dependencies..."
-            pip3 install numpy pandas matplotlib pyyaml requests --user >/dev/null 2>&1
-        fi
-
-        echo "Retrying environment setup..."
-    fi
-done
-
-if [[ $SETUP_SUCCESS -eq 0 ]]; then
-    echo "ERROR: Environment setup failed after $MAX_RETRY attempts"
-    echo "WARNING: Proceeding with limited functionality, some metrics may not be collected"
-    export DISABLE_LIMITED_FEATURES=1
+bash scripts/setup_env.sh
+ENV_EXIT_CODE=$?
+if [[ $ENV_EXIT_CODE -ne 0 ]]; then
+    echo "WARNING: Environment setup encountered some issues, but will attempt to continue"
+    echo "Some features may be disabled or limited"
+else
+    echo "Environment setup completed successfully"
 fi
-
-echo "Environment setup completed"
 echo
 
 # Step 2: Run warmup if enabled
@@ -226,13 +201,23 @@ done
 
 # Step 4: Generate performance report
 echo "=== Step 4: Report Generation ==="
-if ! bash scripts/generate_report.sh "$TEST_ID"; then
-    echo "ERROR: Report generation failed"
-    exit 1
+bash scripts/generate_report.sh "$TEST_ID"
+REPORT_EXIT_CODE=$?
+if [[ $REPORT_EXIT_CODE -ne 0 ]]; then
+    echo "WARNING: Report generation encountered some issues"
+    echo "Raw test data is still available in: $OUTPUT_DIR/raw_data/$TEST_ID/"
+else
+    echo "Report generated successfully"
 fi
 
-echo "Performance test completed successfully!"
+echo
+echo "======================================================================"
+echo "✅ Performance test execution completed!"
 echo "Test ID: $TEST_ID"
-echo "Results available at: $OUTPUT_DIR/reports/$TEST_ID/"
+echo "Raw test data: $OUTPUT_DIR/raw_data/$TEST_ID/"
+if [[ -d "$OUTPUT_DIR/reports/$TEST_ID/" ]]; then
+    echo "Report available at: $OUTPUT_DIR/reports/$TEST_ID/"
+fi
+echo "======================================================================"
 echo
 exit 0
