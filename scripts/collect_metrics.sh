@@ -18,6 +18,12 @@ mkdir -p "$OUTPUT_RAW_DIR"
 
 # Start metrics collection
 start_collection() {
+    # Check if metrics collection is disabled
+    if [[ ${DISABLE_TEGRASTATS:-0} -eq 1 && ! -x "$(command -v nvidia-smi)" ]]; then
+        echo "WARNING: Both tegrastats and nvidia-smi are not available, skipping metrics collection"
+        return 1
+    fi
+
     echo "Starting metrics collection for $TEST_CASE"
     echo "timestamp,gpu_utilization,gpu_memory_used_mb,gpu_power_w,gpu_temp_c,cpu_utilization,cpu_memory_used_mb,cpu_load_1min" > "$METRICS_FILE"
 
@@ -25,29 +31,33 @@ start_collection() {
     (
         while true; do
             timestamp=$(date +%s.%N)
+            gpu_util=""
+            gpu_mem=""
+            gpu_power=""
+            gpu_temp=""
 
-            # Get GPU metrics from tegrastats
-            if command -v tegrastats &> /dev/null; then
+            # Get GPU metrics
+            if [[ ${DISABLE_TEGRASTATS:-0} -eq 0 && -x "$(command -v tegrastats)" ]]; then
                 tegrastats_output=$(tegrastats --interval 100 --stop 1 2>/dev/null || true)
-                gpu_util=$(echo "$tegrastats_output" | grep -oP 'GR3D_FREQ \K[0-9]+%' | head -1 | sed 's/%//')
-                gpu_mem=$(echo "$tegrastats_output" | grep -oP 'RAM \K[0-9]+/[0-9]+' | cut -d'/' -f1)
-                gpu_power=$(echo "$tegrastats_output" | grep -oP 'POM_5V_GPU \K[0-9]+/[0-9]+' | cut -d'/' -f1)
-                gpu_temp=$(echo "$tegrastats_output" | grep -oP 'GPU@\K[0-9.]+C' | sed 's/C//')
-            else
-                # Fallback to nvidia-smi if tegrastats not available
-                gpu_util=$(nvidia-smi --query-gpu=utilization.gpu --format=csv,noheader,nounits | head -1)
-                gpu_mem=$(nvidia-smi --query-gpu=memory.used --format=csv,noheader,nounits | head -1)
-                gpu_power=$(nvidia-smi --query-gpu=power.draw --format=csv,noheader,nounits | head -1 | sed 's/ .*//')
-                gpu_temp=$(nvidia-smi --query-gpu=temperature.gpu --format=csv,noheader,nounits | head -1)
+                gpu_util=$(echo "$tegrastats_output" | grep -oP 'GR3D_FREQ \K[0-9]+%' | head -1 | sed 's/%//' || echo "")
+                gpu_mem=$(echo "$tegrastats_output" | grep -oP 'RAM \K[0-9]+/[0-9]+' | cut -d'/' -f1 || echo "")
+                gpu_power=$(echo "$tegrastats_output" | grep -oP 'POM_5V_GPU \K[0-9]+/[0-9]+' | cut -d'/' -f1 || echo "")
+                gpu_temp=$(echo "$tegrastats_output" | grep -oP 'GPU@\K[0-9.]+C' | sed 's/C//' || echo "")
+            elif [[ -x "$(command -v nvidia-smi)" ]]; then
+                # Fallback to nvidia-smi if tegrastats not available or disabled
+                gpu_util=$(nvidia-smi --query-gpu=utilization.gpu --format=csv,noheader,nounits 2>/dev/null | head -1 || echo "")
+                gpu_mem=$(nvidia-smi --query-gpu=memory.used --format=csv,noheader,nounits 2>/dev/null | head -1 || echo "")
+                gpu_power=$(nvidia-smi --query-gpu=power.draw --format=csv,noheader,nounits 2>/dev/null | head -1 | sed 's/ .*//' || echo "")
+                gpu_temp=$(nvidia-smi --query-gpu=temperature.gpu --format=csv,noheader,nounits 2>/dev/null | head -1 || echo "")
             fi
 
             # Get CPU metrics
-            cpu_util=$(top -bn1 | grep 'Cpu(s)' | sed 's/.*, *\([0-9.]*\)%* id.*/\1/' | awk '{print 100 - $1}')
-            cpu_mem=$(free -m | grep Mem | awk '{print $3}')
-            cpu_load=$(uptime | awk -F'load average:' '{print $2}' | cut -d',' -f1 | sed 's/ //g')
+            cpu_util=$(top -bn1 | grep 'Cpu(s)' | sed 's/.*, *\([0-9.]*\)%* id.*/\1/' | awk '{print 100 - $1}' 2>/dev/null || echo "")
+            cpu_mem=$(free -m | grep Mem | awk '{print $3}' 2>/dev/null || echo "")
+            cpu_load=$(uptime | awk -F'load average:' '{print $2}' | cut -d',' -f1 | sed 's/ //g' 2>/dev/null || echo "")
 
-            # Write to CSV
-            echo "$timestamp,$gpu_util,$gpu_mem,$gpu_power,$gpu_temp,$cpu_util,$cpu_mem,$cpu_load" >> "$METRICS_FILE"
+            # Write to CSV, handle empty values
+            echo "$timestamp,${gpu_util:-},${gpu_mem:-},${gpu_power:-},${gpu_temp:-},${cpu_util:-},${cpu_mem:-},${cpu_load:-}" >> "$METRICS_FILE"
 
             sleep "$COLLECTION_INTERVAL"
         done

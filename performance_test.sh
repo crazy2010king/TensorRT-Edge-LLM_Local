@@ -92,11 +92,40 @@ echo
 
 # Step 1: Setup environment and check dependencies
 echo "=== Step 1: Environment Setup ==="
-if ! bash scripts/setup_env.sh; then
-    echo "ERROR: Environment setup failed"
-    exit 1
+MAX_RETRY=2
+RETRY_COUNT=0
+SETUP_SUCCESS=0
+
+while [[ $RETRY_COUNT -lt $MAX_RETRY ]]; do
+    if bash scripts/setup_env.sh; then
+        SETUP_SUCCESS=1
+        break
+    else
+        RETRY_COUNT=$((RETRY_COUNT + 1))
+        echo "WARNING: Environment setup failed (attempt $RETRY_COUNT/$MAX_RETRY), attempting automatic repair..."
+
+        # Try common fixes
+        if [[ $EUID -eq 0 ]]; then
+            echo "Trying to install missing dependencies..."
+            apt update -y >/dev/null 2>&1
+            apt install -y nvidia-l4t-tools jq yq python3-pip >/dev/null 2>&1
+            pip3 install numpy pandas matplotlib pyyaml requests >/dev/null 2>&1
+        else
+            echo "Trying to install missing Python dependencies..."
+            pip3 install numpy pandas matplotlib pyyaml requests --user >/dev/null 2>&1
+        fi
+
+        echo "Retrying environment setup..."
+    fi
+done
+
+if [[ $SETUP_SUCCESS -eq 0 ]]; then
+    echo "ERROR: Environment setup failed after $MAX_RETRY attempts"
+    echo "WARNING: Proceeding with limited functionality, some metrics may not be collected"
+    export DISABLE_LIMITED_FEATURES=1
 fi
-echo "Environment setup completed successfully"
+
+echo "Environment setup completed"
 echo
 
 # Step 2: Run warmup if enabled

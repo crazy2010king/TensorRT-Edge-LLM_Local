@@ -10,7 +10,6 @@ echo "Checking environment dependencies..."
 REQUIRED_COMMANDS=(
     "python3"
     "jq"
-    "tegrastats"
     "yq"
     "curl"
 )
@@ -21,6 +20,28 @@ for CMD in "${REQUIRED_COMMANDS[@]}"; do
         exit 1
     fi
 done
+
+# Special handling for tegrastats (Jetson specific)
+if ! command -v tegrastats &> /dev/null; then
+    echo "WARNING: tegrastats command not found, attempting automatic installation..."
+    # Try to install tegrastats
+    if [[ $EUID -eq 0 ]]; then
+        apt update -y >/dev/null 2>&1
+        if apt install -y nvidia-l4t-tools >/dev/null 2>&1; then
+            echo "SUCCESS: tegrastats installed successfully"
+        else
+            echo "WARNING: Failed to install tegrastats, will disable power and system metrics collection"
+            export DISABLE_TEGRASTATS=1
+        fi
+    else
+        echo "WARNING: Not running as root, cannot install tegrastats automatically"
+        echo "WARNING: Please run 'sudo apt install nvidia-l4t-tools' to install tegrastats for full metrics collection"
+        echo "WARNING: Will proceed without power and system metrics collection"
+        export DISABLE_TEGRASTATS=1
+    fi
+else
+    export DISABLE_TEGRASTATS=0
+fi
 
 # Check if TensorRT Edge-LLM inference binary exists
 INFERENCE_BIN="./build/bin/llm_inference"
