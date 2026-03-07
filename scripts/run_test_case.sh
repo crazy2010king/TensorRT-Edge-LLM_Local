@@ -34,7 +34,7 @@ OUTPUT_RAW_DIR="$TEST_OUTPUT_DIR/raw_data/$TEST_ID"
 mkdir -p "$OUTPUT_RAW_DIR" "$TEST_OUTPUT_DIR/logs"
 
 RESULT_FILE="$OUTPUT_RAW_DIR/${TEST_CASE}_run_${RUN_NUMBER}.json"
-LOG_FILE="$TEST_OUTPUT_DIR/logs/$TEST_ID_${TEST_CASE}_run_${RUN_NUMBER}.log"
+LOG_FILE="$TEST_OUTPUT_DIR/logs/${TEST_ID}_${TEST_CASE}_run_${RUN_NUMBER}.log"
 
 echo "Executing test case: $TEST_CASE (run $RUN_NUMBER)"
 

@@ -173,7 +173,7 @@ esac
 # Execute each test case
 for TEST_CASE in "${TEST_CASES[@]}"; do
     echo "Running test case: $TEST_CASE"
-    TEST_CASE_LOG="$OUTPUT_DIR/logs/$TEST_ID_$TEST_CASE.log"
+    TEST_CASE_LOG="$OUTPUT_DIR/logs/${TEST_ID}_$TEST_CASE.log"
 
     # Start metrics collection in background
     METRICS_PID=""
