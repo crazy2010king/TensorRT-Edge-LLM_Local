@@ -9,8 +9,6 @@ echo "Checking environment dependencies..."
 # Check required commands
 REQUIRED_COMMANDS=(
     "python3"
-    "jq"
-    "yq"
     "curl"
 )
 
@@ -41,6 +39,52 @@ if ! command -v tegrastats &> /dev/null; then
     fi
 else
     export DISABLE_TEGRASTATS=0
+fi
+
+# Special handling for jq (JSON parser)
+if ! command -v jq &> /dev/null; then
+    echo "WARNING: jq command not found, attempting automatic installation..."
+    if [[ $EUID -eq 0 ]]; then
+        if apt update -y >/dev/null 2>&1 && apt install -y jq >/dev/null 2>&1; then
+            echo "SUCCESS: jq installed successfully"
+        else
+            echo "ERROR: Failed to install jq, JSON parsing will fail"
+            exit 1
+        fi
+    else
+        echo "ERROR: jq not found and cannot install without root privileges"
+        echo "Please install jq manually: sudo apt install jq"
+        exit 1
+    fi
+fi
+
+# Special handling for yq (YAML parser)
+if ! command -v yq &> /dev/null; then
+    echo "WARNING: yq command not found, attempting automatic installation..."
+    if [[ $EUID -eq 0 ]]; then
+        if apt update -y >/dev/null 2>&1 && apt install -y yq >/dev/null 2>&1; then
+            echo "SUCCESS: yq installed successfully"
+        else
+            # Try pip install as fallback
+            if pip3 install yq --user >/dev/null 2>&1; then
+                export PATH=$PATH:$HOME/.local/bin
+                echo "SUCCESS: yq installed via pip successfully"
+            else
+                echo "ERROR: Failed to install yq, YAML parsing will fail"
+                exit 1
+            fi
+        fi
+    else
+        # Try pip install for non-root users
+        if pip3 install yq --user >/dev/null 2>&1; then
+            export PATH=$PATH:$HOME/.local/bin
+            echo "SUCCESS: yq installed via pip successfully"
+        else
+            echo "ERROR: yq not found and cannot install without root privileges"
+            echo "Please install yq manually: sudo apt install yq or pip3 install yq"
+            exit 1
+        fi
+    fi
 fi
 
 # Check if TensorRT Edge-LLM inference binary exists
