@@ -18,6 +18,7 @@ ENABLE_COMPILE_OPT="true"      # O3/LTO/架构专属优化
 ENABLE_CUDA_GRAPH="true"       # 全链路CUDA Graph优化 (prefill+decoding)
 ENABLE_KVCACHE_OPT="true"      # KVCache极致优化 (FP8量化+分页KVCache)
 ENABLE_ASYNC_POSTPROC="true"   # 预处理/后处理异步化优化
+AUTO_OPTIMIZE_CONFIG="true"    # 检测完平台后自动优化test_config.yaml配置
 
 # 编译参数
 BUILD_TYPE="Release"
@@ -135,6 +136,23 @@ BUILD_LOG="${LOG_DIR}/build_optimized_$(date +%Y%m%d_%H%M%S).log"
 log_info "初始化完成，日志文件: ${BUILD_LOG}"
 log_info "备份目录: ${BACKUP_DIR}"
 echo ""
+
+# 自动优化配置文件
+if [[ "${AUTO_OPTIMIZE_CONFIG}" == "true" ]]; then
+    log_info "=================================================="
+    log_info "🔧 自动优化test_config.yaml配置"
+    log_info "=================================================="
+    AUTO_CONFIG_SCRIPT="${BASE_DIR}/scripts/auto_optimize_config.sh"
+    if [[ -f "${AUTO_CONFIG_SCRIPT}" ]]; then
+        chmod +x "${AUTO_CONFIG_SCRIPT}"
+        log_info "正在执行自动配置优化脚本..."
+        "${AUTO_CONFIG_SCRIPT}" --non-interactive 2>&1 | tee -a "${BUILD_LOG}"
+        log_info "✅ 配置文件自动优化完成"
+    else
+        log_warn "未找到auto_optimize_config.sh脚本，跳过自动配置优化"
+    fi
+    echo ""
+fi
 
 # ============== 环境检查 ==============
 log_info "=================================================="

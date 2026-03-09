@@ -402,26 +402,36 @@ EOF
 
 # ============== 主流程 ==============
 main() {
-    echo "=================================================="
-    echo "🚀 配置文件自动优化脚本启动"
-    echo "=================================================="
-    echo ""
+    # 检查是否是非交互模式（被其他脚本调用）
+    NON_INTERACTIVE="false"
+    if [[ $# -gt 0 && "$1" == "--non-interactive" ]]; then
+        NON_INTERACTIVE="true"
+    fi
+
+    if [[ "${NON_INTERACTIVE}" == "false" ]]; then
+        echo "=================================================="
+        echo "🚀 配置文件自动优化脚本启动"
+        echo "=================================================="
+        echo ""
+    fi
 
     detect_hardware
     generate_optimal_config
     write_config
 
-    echo "=================================================="
-    echo "🎉 配置优化完成!"
-    echo "=================================================="
-    log_info "适配平台: ${PLATFORM_TYPE}"
-    log_info "原配置备份: ${BACKUP_DIR}"
-    log_info "当前配置: ${CONFIG_FILE}"
-    echo ""
-    log_info "💡 下一步操作:"
-    log_info "  1. 确认配置参数是否符合预期"
-    log_info "  2. 运行性能测试: bash performance_test.sh -t full"
-    echo "=================================================="
+    if [[ "${NON_INTERACTIVE}" == "false" ]]; then
+        echo "=================================================="
+        echo "🎉 配置优化完成!"
+        echo "=================================================="
+        log_info "适配平台: ${PLATFORM_TYPE}"
+        log_info "原配置备份: ${BACKUP_DIR}"
+        log_info "当前配置: ${CONFIG_FILE}"
+        echo ""
+        log_info "💡 下一步操作:"
+        log_info "  1. 确认配置参数是否符合预期"
+        log_info "  2. 运行性能测试: bash performance_test.sh -t full"
+        echo "=================================================="
+    fi
 }
 
 main "$@"
