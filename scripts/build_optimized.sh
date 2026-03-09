@@ -445,16 +445,37 @@ fi
 # Strip二进制
 if [[ "${STRIP_BINARY}" == "true" ]]; then
     log_info "正在strip二进制文件..."
-    find bin/ -type f -executable -exec strip {} \; 2>&1 | tee -a "${BUILD_LOG}"
+    # 查找所有可执行文件，适配不同输出路径
+    find . -type f -executable -name "llm_inference" -o -name "*.so" | xargs strip 2>/dev/null || true
 fi
 
-# 检查编译产物
+# 检查编译产物（当前在build目录下）
+LLM_INFERENCE_PATH=""
+# 查找llm_inference二进制的可能路径
 if [[ -f "bin/llm_inference" ]]; then
-    BINARY_SIZE=$(du -h bin/llm_inference | awk '{print $1}')
-    log_info "编译完成，主程序大小: ${BINARY_SIZE}"
+    LLM_INFERENCE_PATH="bin/llm_inference"
+elif [[ -f "examples/llm/llm_inference" ]]; then
+    LLM_INFERENCE_PATH="examples/llm/llm_inference"
+fi
+
+if [[ -n "${LLM_INFERENCE_PATH}" && -f "${LLM_INFERENCE_PATH}" ]]; then
+    BINARY_SIZE=$(du -h "${LLM_INFERENCE_PATH}" | awk '{print $1}')
+    log_info "编译完成，主程序路径: build/${LLM_INFERENCE_PATH}, 大小: ${BINARY_SIZE}"
+    # 复制到项目根目录的bin目录统一管理
+    mkdir -p ../bin/
+    cp -f "${LLM_INFERENCE_PATH}" ../bin/
 else
-    log_error "编译成功但未找到llm_inference二进制文件"
-    exit 1
+    log_warn "未找到标准路径的llm_inference二进制文件，正在全局搜索..."
+    LLM_INFERENCE_PATH=$(find . -name "llm_inference" -type f -executable 2>/dev/null | head -n1)
+    if [[ -n "${LLM_INFERENCE_PATH}" ]]; then
+        BINARY_SIZE=$(du -h "${LLM_INFERENCE_PATH}" | awk '{print $1}')
+        log_info "找到主程序路径: build/${LLM_INFERENCE_PATH}, 大小: ${BINARY_SIZE}"
+        mkdir -p ../bin/
+        cp -f "${LLM_INFERENCE_PATH}" ../bin/
+    else
+        log_error "编译失败，未找到llm_inference二进制文件"
+        exit 1
+    fi
 fi
 
 cd .. || exit 1
