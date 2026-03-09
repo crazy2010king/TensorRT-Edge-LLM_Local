@@ -11,11 +11,17 @@ device:
 # Model configuration
 model:
   name: "Qwen3-VL-2B-Instruct"
-  precision: "FP16"
-  tensorrt_engine_path: "./engines/qwen3_vl_2b_fp16.engine"
+  precision: "NVFP4"
+  tensorrt_engine_path: "./engines/qwen3_vl_2b_nvfp4_eagle.engine"
   max_batch_size: 4
   max_input_len: 4096
   max_output_len: 1024
+  # Eagle Speculative Decoding configuration
+  eagle: true
+  eagle_draft_model_path: "./models/qwen3_vl_2b_eagle_draft_nvfp4.engine"
+  eagle_draft_top_k: 4
+  eagle_draft_step: 3
+  eagle_verify_tree_size: 60
 
 # Test case configurations
 test_cases:

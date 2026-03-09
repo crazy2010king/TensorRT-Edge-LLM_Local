@@ -70,11 +70,11 @@ struct EagleArgs
 
     // Number of tokens selected per drafting step from the draft model's output distribution.
     // This controls the branching factor at each level of the draft tree.
-    int32_t draftTopK{10};
+    int32_t draftTopK{4};
 
     // Number of drafting steps to perform with the draft model.
     // Each step extends the draft tree by one more level.
-    int32_t draftStep{6};
+    int32_t draftStep{3};
 
     // Number of tokens to select from the complete draft tree for base model verification.
     // The total draft tree size is: 1 + draftTopK + (draftStep - 1) * draftTopK * draftTopK
