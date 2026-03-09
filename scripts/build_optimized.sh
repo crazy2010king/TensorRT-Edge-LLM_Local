@@ -104,9 +104,18 @@ elif [[ "${CPU_ARCH}" == "x86_64" && "${GPU_ARCH}" == "sm_75" ]]; then
 elif [[ "${CPU_ARCH}" == "x86_64" && "${GPU_ARCH}" == "sm_90" ]]; then
     PLATFORM_TYPE="NVIDIA Hopper (x86 + H100/H800/H200/HGX H100系列服务器GPU)"
 elif [[ "${CPU_ARCH}" == "x86_64" && "${GPU_ARCH}" == "sm_100" ]]; then
-    PLATFORM_TYPE="NVIDIA Blackwell (x86 + B100/B200/GB100/GB200/GB300系列最新服务器GPU)"
+    # Blackwell系列热门型号单独标注
+    if grep -qi "b200\|gb200" /proc/driver/nvidia/version /sys/bus/pci/devices/*/device 2>/dev/null; then
+        PLATFORM_TYPE="NVIDIA Blackwell (x86 + B200/GB200 最新一代服务器GPU)"
+    else
+        PLATFORM_TYPE="NVIDIA Blackwell (x86 + B100/B200/GB100/GB200/GB300系列最新服务器GPU)"
+    fi
 elif [[ "${CPU_ARCH}" == "x86_64" && ("${GPU_ARCH}" == "sm_120" || "${GPU_ARCH}" == "sm_121") ]]; then
-    PLATFORM_TYPE="NVIDIA Thor (x86 + 索尔系列下一代GPU)"
+    # Thor索尔下一代架构
+    PLATFORM_TYPE="NVIDIA Thor (x86 + 索尔Thor系列下一代旗舰GPU)"
+elif [[ "${CPU_ARCH}" == "x86_64" && "${GPU_ARCH}" == "sm_110" ]]; then
+    # 预留未来架构支持
+    PLATFORM_TYPE="NVIDIA 下一代架构 (x86 + 未发布最新GPU)"
 else
     PLATFORM_TYPE="通用平台 (${CPU_ARCH} + ${GPU_ARCH})"
 fi
