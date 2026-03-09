@@ -13,7 +13,7 @@ LOG_DIR="${BASE_DIR}/output/logs"
 
 # 模型配置
 BASE_MODEL_NAME="Qwen3-VL-2B-Instruct"
-DRAFT_MODEL_NAME="qwen3_vl_2b_eagle_draft"
+DRAFT_MODEL_NAME="Qwen3-VL-2B-Instruct_eagle3"
 QUANT_TYPE="nvfp4"
 KV_CACHE_QUANT_TYPE="fp8"
 
@@ -21,7 +21,7 @@ KV_CACHE_QUANT_TYPE="fp8"
 MAX_BATCH_SIZE=4
 MAX_INPUT_LEN=4096
 MAX_OUTPUT_LEN=1024
-EAGLE_ENABLE="false"
+EAGLE_ENABLE="true"
 
 # ============== 初始化检查 ==============
 echo "=================================================="
@@ -144,12 +144,11 @@ echo "量化类型: ${QUANT_TYPE}"
 echo "日志文件: ${DRAFT_ENGINE_LOG}"
 echo ""
 
-# 执行草稿模型引擎导出（修复相对导入问题）
+# 执行草稿模型引擎导出（修复相对导入问题，草稿模型无需额外量化）
 cd "${BASE_DIR}" && PYTHONPATH="${BASE_DIR}" python -m tensorrt_edgellm.scripts.export_draft \
     --base_model_dir "${QUANT_OUTPUT_DIR}" \
     --draft_model_dir "${MODEL_BASE_DIR}/${DRAFT_MODEL_NAME}" \
-    --output_dir "${DRAFT_ENGINE_DIR}" \
-    --quantization "${QUANT_TYPE}" 2>&1 | tee "${DRAFT_ENGINE_LOG}"
+    --output_dir "${DRAFT_ENGINE_DIR}" 2>&1 | tee "${DRAFT_ENGINE_LOG}"
 
 # 检查执行结果
 if [[ ${PIPESTATUS[0]} -ne 0 ]]; then
