@@ -234,9 +234,18 @@ set(CMAKE_C_FLAGS_RELEASE "${CMAKE_C_FLAGS_RELEASE} '"${C_OPTIM_FLAGS}"'")
     # 设置GPU架构：删除所有现有架构配置，只保留当前检测到的架构，避免不兼容
     # 先删除所有-gencode相关行
     sed -i '/-gencode arch=compute_/d' CMakeLists.txt
-    # 再添加当前GPU架构
-    sed -i '/set(CMAKE_CUDA_FLAGS/a\    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -gencode arch='${GPU_ARCH}',code='${GPU_ARCH}'")' CMakeLists.txt
-    log_info "已设置仅编译当前GPU架构: ${GPU_ARCH}"
+    # 提取架构版本号
+    GPU_ARCH_VER="${GPU_ARCH#sm_}"
+    # 对于CUDA版本 < 12.8，使用compute_XX作为虚拟架构，兼容老版本nvcc
+    if [[ "${CUDA_VERSION}" < "12.8" ]]; then
+        # 旧版本CUDA需要虚拟架构+真实架构配对
+        sed -i '/set(CMAKE_CUDA_FLAGS/a\    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -gencode arch=compute_'${GPU_ARCH_VER}',code=sm_'${GPU_ARCH_VER}'")' CMakeLists.txt
+        log_info "已设置仅编译当前GPU架构: compute_${GPU_ARCH_VER} -> sm_${GPU_ARCH_VER} (兼容旧版CUDA)"
+    else
+        # 新版本CUDA支持直接使用sm_XX
+        sed -i '/set(CMAKE_CUDA_FLAGS/a\    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -gencode arch='${GPU_ARCH}',code='${GPU_ARCH}'")' CMakeLists.txt
+        log_info "已设置仅编译当前GPU架构: ${GPU_ARCH}"
+    fi
 
     # 开启LTO
     if [[ "${ENABLE_LTO}" == "true" ]]; then
