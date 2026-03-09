@@ -5,13 +5,13 @@ set -uo pipefail
 # 支持优化项：编译优化、CUDA Graph优化、KVCache优化、预处理/后处理优化
 
 # ============== 配置参数 ==============
-BASE_DIR="/home/nvidia/work_dev/wqq/nfs/test_cc_dev/TensorRT-Edge-LLM"
-LOG_DIR="./output/logs"
-BACKUP_DIR="./output/backups/build_$(date +%Y%m%d_%H%M%S)"
+BASE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+LOG_DIR="${BASE_DIR}/output/logs"
+BACKUP_DIR="${BASE_DIR}/output/backups/build_$(date +%Y%m%d_%H%M%S)"
 
-# 硬件平台配置 (默认为AGX Orin sm_87)
+# 硬件平台配置 (自动检测当前GPU架构)
 # 支持选项: sm_70, sm_72, sm_75, sm_80, sm_86, sm_87, sm_89, sm_90, sm_100, sm_120, sm_121
-GPU_ARCH="sm_87"
+GPU_ARCH="sm_89"
 
 # 优化开关 (默认全部开启)
 ENABLE_COMPILE_OPT="true"      # O3/LTO/架构专属优化
@@ -53,7 +53,64 @@ echo "🚀 10倍性能优化编译脚本启动"
 echo "=================================================="
 echo "当前时间: $(date)"
 echo "工作目录: ${BASE_DIR}"
-echo "目标GPU架构: ${GPU_ARCH}"
+
+# 自动检测硬件平台
+echo ""
+echo "🔍 正在自动检测硬件平台配置..."
+CPU_ARCH=$(uname -m)
+echo "检测到CPU架构: ${CPU_ARCH}"
+
+# 自动检测GPU架构（优先使用nvidia-smi检测实际硬件，更准确）
+if command -v nvidia-smi &> /dev/null; then
+    # 检测实际GPU的计算能力，取第一个GPU的
+    GPU_COMPUTE_CAP=$(nvidia-smi --query-gpu=compute_cap --format=csv,noheader | head -n1 | tr -d '.' | awk '{print $1}')
+    if [[ -n "${GPU_COMPUTE_CAP}" && "${GPU_COMPUTE_CAP}" != "[Not Supported]" ]]; then
+        GPU_ARCH="sm_${GPU_COMPUTE_CAP}"
+        echo "检测到GPU计算能力: ${GPU_COMPUTE_CAP:0:1}.${GPU_COMPUTE_CAP:1} → 自动设置GPU_ARCH=${GPU_ARCH}"
+    elif command -v nvcc &> /dev/null; then
+        #  fallback到nvcc检测支持的最高架构
+        GPU_COMPUTE_CAP=$(nvcc --list-gpu-arch | grep -E "compute_[0-9]+" | tail -n1 | cut -d'_' -f2)
+        GPU_ARCH="sm_${GPU_COMPUTE_CAP}"
+        echo "nvidia-smi检测失败，使用nvcc检测最高支持架构: ${GPU_COMPUTE_CAP} → 自动设置GPU_ARCH=${GPU_ARCH}"
+    else
+        echo "⚠️  未检测到GPU信息，使用默认GPU_ARCH=${GPU_ARCH}"
+    fi
+elif command -v nvcc &> /dev/null; then
+    # 没有nvidia-smi但有nvcc的情况
+    GPU_COMPUTE_CAP=$(nvcc --list-gpu-arch | grep -E "compute_[0-9]+" | tail -n1 | cut -d'_' -f2)
+    GPU_ARCH="sm_${GPU_COMPUTE_CAP}"
+    echo "检测到CUDA但无nvidia-smi，使用nvcc检测最高支持架构: ${GPU_COMPUTE_CAP} → 自动设置GPU_ARCH=${GPU_ARCH}"
+else
+    echo "⚠️  未检测到CUDA，使用默认GPU_ARCH=${GPU_ARCH}"
+fi
+
+# 识别平台类型（支持英伟达全系列硬件，包括最新架构）
+if [[ "${CPU_ARCH}" == "aarch64" && "${GPU_ARCH}" == "sm_87" ]]; then
+    PLATFORM_TYPE="NVIDIA AGX Orin (ARM + Ampere GPU)"
+elif [[ "${CPU_ARCH}" == "aarch64" && "${GPU_ARCH}" == "sm_86" ]]; then
+    PLATFORM_TYPE="NVIDIA Jetson Orin NX/Nano (ARM + Ampere GPU)"
+elif [[ "${CPU_ARCH}" == "aarch64" && "${GPU_ARCH}" == "sm_72" ]]; then
+    PLATFORM_TYPE="NVIDIA Jetson Xavier (ARM + Volta GPU)"
+elif [[ "${CPU_ARCH}" == "aarch64" && "${GPU_ARCH}" == "sm_70" ]]; then
+    PLATFORM_TYPE="NVIDIA Jetson TX2 (ARM + Pascal GPU)"
+elif [[ "${CPU_ARCH}" == "x86_64" && "${GPU_ARCH}" == "sm_89" ]]; then
+    PLATFORM_TYPE="NVIDIA Ada Lovelace (x86 + RTX 40系/Ada L4/L40系列GPU)"
+elif [[ "${CPU_ARCH}" == "x86_64" && "${GPU_ARCH}" == "sm_86" ]]; then
+    PLATFORM_TYPE="NVIDIA Ampere (x86 + RTX 30系/A10/A30系列GPU)"
+elif [[ "${CPU_ARCH}" == "x86_64" && "${GPU_ARCH}" == "sm_80" ]]; then
+    PLATFORM_TYPE="NVIDIA Ampere (x86 + A100/A800/HGX A100系列服务器GPU)"
+elif [[ "${CPU_ARCH}" == "x86_64" && "${GPU_ARCH}" == "sm_75" ]]; then
+    PLATFORM_TYPE="NVIDIA Turing (x86 + RTX 20系/T4系列GPU)"
+elif [[ "${CPU_ARCH}" == "x86_64" && "${GPU_ARCH}" == "sm_90" ]]; then
+    PLATFORM_TYPE="NVIDIA Hopper (x86 + H100/H800/H200/HGX H100系列服务器GPU)"
+elif [[ "${CPU_ARCH}" == "x86_64" && "${GPU_ARCH}" == "sm_100" ]]; then
+    PLATFORM_TYPE="NVIDIA Blackwell (x86 + B100/B200/GB100/GB200/GB300系列最新服务器GPU)"
+elif [[ "${CPU_ARCH}" == "x86_64" && ("${GPU_ARCH}" == "sm_120" || "${GPU_ARCH}" == "sm_121") ]]; then
+    PLATFORM_TYPE="NVIDIA Thor (x86 + 索尔系列下一代GPU)"
+else
+    PLATFORM_TYPE="通用平台 (${CPU_ARCH} + ${GPU_ARCH})"
+fi
+echo "✅ 识别到平台类型: ${PLATFORM_TYPE}"
 echo ""
 
 # 检查并切换到工作目录
@@ -117,15 +174,28 @@ if [[ "${ENABLE_COMPILE_OPT}" == "true" ]]; then
     # 修改CMakeLists.txt添加优化参数
     log_info "正在修改CMakeLists.txt添加编译优化参数..."
 
+    # 根据CPU架构自动选择编译优化参数
+    if [[ "${CPU_ARCH}" == "aarch64" ]]; then
+        # ARM架构优化参数
+        CXX_OPTIM_FLAGS="-O3 -march=armv8.2-a+simd+fp16 -ffast-math"
+        C_OPTIM_FLAGS="-O3 -march=armv8.2-a+simd+fp16 -ffast-math"
+        log_info "使用ARM架构专属优化参数: ${CXX_OPTIM_FLAGS}"
+    else
+        # x86架构优化参数
+        CXX_OPTIM_FLAGS="-O3 -march=native -mfma -mavx2 -ffast-math"
+        C_OPTIM_FLAGS="-O3 -march=native -mfma -mavx2 -ffast-math"
+        log_info "使用x86架构专属优化参数: ${CXX_OPTIM_FLAGS}"
+    fi
+
     # 查找CMAKE_CXX_FLAGS配置并修改
     if grep -q "CMAKE_CXX_FLAGS_RELEASE" CMakeLists.txt; then
         # 已存在Release配置，修改
-        sed -i '/CMAKE_CXX_FLAGS_RELEASE/c\    set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -O3 -march=armv8.2-a+simd+fp16 -ffast-math")' CMakeLists.txt
+        sed -i '/CMAKE_CXX_FLAGS_RELEASE/c\    set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} '"${CXX_OPTIM_FLAGS}"'")' CMakeLists.txt
     else
         # 不存在则添加
         sed -i '/project(trt_edgellm)/a\
-set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -O3 -march=armv8.2-a+simd+fp16 -ffast-math")\
-set(CMAKE_C_FLAGS_RELEASE "${CMAKE_C_FLAGS_RELEASE} -O3 -march=armv8.2-a+simd+fp16 -ffast-math")
+set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} '"${CXX_OPTIM_FLAGS}"'")\
+set(CMAKE_C_FLAGS_RELEASE "${CMAKE_C_FLAGS_RELEASE} '"${C_OPTIM_FLAGS}"'")
 ' CMakeLists.txt
     fi
 
