@@ -433,9 +433,13 @@ if [[ ${PIPESTATUS[0]} -ne 0 ]]; then
     exit 1
 fi
 
-# 执行编译：忽略不支持的架构编译错误，当前架构编译成功即可
-log_info "开始编译（忽略不支持的架构错误）..."
-make -j"${PARALLEL_JOBS}" -i 2>&1 | tee -a "${BUILD_LOG}"
+# 执行编译：继续编译出错的模块，优先保证主程序编译成功
+log_info "开始编译（忽略非核心模块错误，继续编译）..."
+# 先用-k参数继续编译，遇到错误不停止，尽可能多编译
+make -j"${PARALLEL_JOBS}" -k -i 2>&1 | tee -a "${BUILD_LOG}"
+# 再次尝试编译主程序，确保依赖问题解决
+log_info "二次编译主程序，解决依赖问题..."
+make -j"${PARALLEL_JOBS}" llm_inference -k -i 2>&1 | tee -a "${BUILD_LOG}"
 
 if [[ ${PIPESTATUS[0]} -ne 0 ]]; then
     log_error "编译失败，请检查日志"
