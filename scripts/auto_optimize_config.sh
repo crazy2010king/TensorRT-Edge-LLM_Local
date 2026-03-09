@@ -41,8 +41,35 @@ detect_hardware() {
         GPU_NAME=$(nvidia-smi --query-gpu=name --format=csv,noheader | head -n1 | xargs)
         log_info "检测到GPU型号: ${GPU_NAME}"
 
-        # 获取GPU显存大小
-        GPU_MEM=$(nvidia-smi --query-gpu=memory.total --format=csv,noheader | head -n1 | awk '{print $1 $2}')
+        # 获取GPU显存大小，适配Jetson/AGX Orin平台（Docker中nvidia-smi显存显示为N/A的问题）
+        GPU_MEM=$(nvidia-smi --query-gpu=memory.total --format=csv,noheader | head -n1 | awk '{print $1 $2}' | grep -v "^\[")
+
+        # AGX Orin/Jetson平台特殊处理
+        if [[ -z "${GPU_MEM}" || "${GPU_MEM}" == *"N/A"* ]]; then
+            # 方法1：使用tegrastats获取（Jetson专用工具）
+            if command -v tegrastats &> /dev/null; then
+                GPU_MEM_KB=$(tegrastats --stop 2>/dev/null | head -n1 | grep -oP 'RAM \K[0-9]+\/[0-9]+' | cut -d'/' -f2)
+                if [[ -n "${GPU_MEM_KB}" ]]; then
+                    GPU_MEM="$((GPU_MEM_KB / 1024 / 1024))GB"
+                fi
+            fi
+
+            # 方法2：根据平台类型设置默认显存
+            if [[ -z "${GPU_MEM}" ]]; then
+                if [[ "${CPU_ARCH}" == "aarch64" && "${GPU_ARCH}" == "sm_87" ]]; then
+                    # AGX Orin常见配置：32GB/64GB，保守按32GB配置，用户可手动调整
+                    GPU_MEM="32GB"
+                    log_info "AGX Orin平台，自动设置默认显存: ${GPU_MEM}"
+                elif [[ "${CPU_ARCH}" == "aarch64" && "${GPU_ARCH}" == "sm_86" ]]; then
+                    GPU_MEM="8GB"
+                elif [[ "${CPU_ARCH}" == "aarch64" && "${GPU_ARCH}" == "sm_72" ]]; then
+                    GPU_MEM="16GB"
+                else
+                    GPU_MEM="16GB"
+                fi
+            fi
+        fi
+
         log_info "检测到GPU显存: ${GPU_MEM}"
 
         # 获取GPU计算能力
@@ -53,6 +80,7 @@ detect_hardware() {
         log_warn "未检测到nvidia-smi，使用默认配置"
         GPU_NAME="Unknown GPU"
         GPU_MEM="16GB"
+        GPU_COMPUTE_CAP="87"
         GPU_ARCH="sm_87"
         CPU_CORES=8
     fi
@@ -185,12 +213,20 @@ generate_optimal_config() {
 
     # 显存大小自适应调整（统一转换为GB单位）
     GPU_MEM_NUM=${GPU_MEM//[!0-9]/}
-    if [[ "${GPU_MEM}" == *"MiB"* ]]; then
+    # 容错处理：如果解析失败使用默认值
+    if [[ -z "${GPU_MEM_NUM}" ]]; then
+        GPU_MEM_GB=16
+    elif [[ "${GPU_MEM}" == *"MiB"* ]]; then
         # 单位是MiB，转换为GB
         GPU_MEM_GB=$((GPU_MEM_NUM / 1024))
     else
         # 单位已经是GB
         GPU_MEM_GB=${GPU_MEM_NUM}
+    fi
+
+    # 容错处理：确保数值有效
+    if ! [[ "${GPU_MEM_GB}" =~ ^[0-9]+$ ]]; then
+        GPU_MEM_GB=16
     fi
 
     if [[ ${GPU_MEM_GB} -lt 8 ]]; then

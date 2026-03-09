@@ -1,13 +1,13 @@
 # Test Configuration for Qwen3-VL-2B-Instruct Performance Test
 # TensorRT Edge-LLM Test Suite
-# 自动优化生成，适配平台: NVIDIA AGX Orin
-# 生成时间: Mon Mar  9 08:51:10 AM UTC 2026
+# 自动优化生成，适配平台: NVIDIA Ada Lovelace (RTX 40系/L4/L40)
+# 生成时间: Mon Mar  9 17:22:52 CST 2026
 
 # Device configuration
 device:
-  name: "NVIDIA AGX Orin"
-  gpu_memory: "[N/A]"
-  cpu_cores: 12
+  name: "NVIDIA Ada Lovelace (RTX 40系/L4/L40)"
+  gpu_memory: "12282MiB"
+  cpu_cores: 28
   power_mode: "MAXN"
 
 # Model configuration
@@ -16,18 +16,34 @@ model:
   async_tokenizer: true
   async_postprocessing: true
   processing_threads: 4
+  # 预处理/后处理优化配置
+  async_tokenizer: true
+  async_postprocessing: true
+  processing_threads: 4
+  # 预处理/后处理优化配置
+  async_tokenizer: true
+  async_postprocessing: true
+  processing_threads: 4
+  # 预处理/后处理优化配置
+  async_tokenizer: true
+  async_postprocessing: true
+  processing_threads: 4
+  # 预处理/后处理优化配置
+  async_tokenizer: true
+  async_postprocessing: true
+  processing_threads: 4
   # 基础模型配置
   name: "Qwen3-VL-2B-Instruct"
   precision: "NVFP4"
   tensorrt_engine_path: "./output/engines/Qwen3-VL-2B-Instruct_nvfp4_eagle"
-  max_batch_size: 2
-  max_input_len: 2048
-  max_output_len: 512
+  max_batch_size: 8
+  max_input_len: 8192
+  max_output_len: 2048
 
   # 预处理/后处理优化配置
   async_tokenizer: true
   async_postprocessing: true
-  processing_threads: 8
+  processing_threads: 16
 
   # KVCache优化配置
   kv_cache_quantization: "fp8"
@@ -44,8 +60,8 @@ model:
   eagle: true
   eagle_draft_model_path: "./output/engines/Qwen3-VL-2B-Instruct_eagle3_nvfp4"
   eagle_draft_top_k: 4
-  eagle_draft_step: 3
-  eagle_verify_tree_size: 60
+  eagle_draft_step: 4
+  eagle_verify_tree_size: 80
 
 # Test case configurations
 test_cases:
@@ -62,7 +78,7 @@ test_cases:
     enabled: true
     description: "Concurrent requests throughput test"
     input_file: "test_cases/concurrent_requests.json"
-    concurrency_levels: [1, 2, 4, 8]
+    concurrency_levels: [1, 2, 4, 8, 16]
     duration_per_level: 30
     metrics: ["throughput", "latency_distribution", "gpu_utilization"]
 
@@ -101,7 +117,7 @@ test_cases:
   input_length_variation:
     enabled: true
     description: "Performance with different input token lengths"
-    input_lengths: [128, 256, 512, 1024, 512]
+    input_lengths: [128, 256, 512, 1024, 2048]
     output_length: 128
     metrics: ["prefill_time", "latency", "throughput"]
 
@@ -110,7 +126,7 @@ test_cases:
     enabled: true
     description: "Performance with different output token lengths"
     input_length: 128
-    output_lengths: [32, 64, 128, 512, 256]
+    output_lengths: [32, 64, 128, 512, 1024]
     metrics: ["generation_time", "token_rate", "latency"]
 
   # Image resolution variation test
