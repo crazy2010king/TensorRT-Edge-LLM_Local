@@ -6,13 +6,13 @@ set -uo pipefail
 
 # ============== 配置参数 ==============
 # 基础路径配置
-BASE_DIR="/home/nvidia/work_dev/wqq/nfs/test_cc_dev/TensorRT-Edge-LLM"
-MODEL_BASE_DIR="./models"
-ENGINE_OUTPUT_DIR="./engines"
-LOG_DIR="./logs"
+BASE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+MODEL_BASE_DIR="$(dirname "${BASE_DIR}")"
+ENGINE_OUTPUT_DIR="${BASE_DIR}/output/engines"
+LOG_DIR="${BASE_DIR}/output/logs"
 
 # 模型配置
-BASE_MODEL_NAME="qwen3_vl_2b"
+BASE_MODEL_NAME="Qwen3-VL-2B-Instruct"
 DRAFT_MODEL_NAME="qwen3_vl_2b_eagle_draft"
 QUANT_TYPE="nvfp4"
 KV_CACHE_QUANT_TYPE="fp8"
@@ -21,7 +21,7 @@ KV_CACHE_QUANT_TYPE="fp8"
 MAX_BATCH_SIZE=4
 MAX_INPUT_LEN=4096
 MAX_OUTPUT_LEN=1024
-EAGLE_ENABLE="true"
+EAGLE_ENABLE="false"
 
 # ============== 初始化检查 ==============
 echo "=================================================="
@@ -38,7 +38,7 @@ cd "${BASE_DIR}" || {
 }
 
 # 创建必要目录
-mkdir -p "${LOG_DIR}" "${ENGINE_OUTPUT_DIR}"
+mkdir -p "${LOG_DIR}" "${ENGINE_OUTPUT_DIR}" "./output/models"
 
 # 检查模型目录是否存在
 if [[ ! -d "${MODEL_BASE_DIR}/${BASE_MODEL_NAME}" ]]; then
@@ -46,7 +46,7 @@ if [[ ! -d "${MODEL_BASE_DIR}/${BASE_MODEL_NAME}" ]]; then
     exit 1
 fi
 
-if [[ ! -d "${MODEL_BASE_DIR}/${DRAFT_MODEL_NAME}" ]]; then
+if [[ "${EAGLE_ENABLE}" == "true" && ! -d "${MODEL_BASE_DIR}/${DRAFT_MODEL_NAME}" ]]; then
     echo "❌ 错误: Eagle草稿模型目录不存在: ${MODEL_BASE_DIR}/${DRAFT_MODEL_NAME}"
     exit 1
 fi
@@ -58,7 +58,7 @@ echo ""
 echo "=================================================="
 echo "📌 步骤1/3: 执行${QUANT_TYPE}模型量化"
 echo "=================================================="
-QUANT_OUTPUT_DIR="${MODEL_BASE_DIR}/${BASE_MODEL_NAME}_${QUANT_TYPE}"
+QUANT_OUTPUT_DIR="${BASE_DIR}/output/models/${BASE_MODEL_NAME}_${QUANT_TYPE}"
 QUANT_LOG="${LOG_DIR}/quantize_${QUANT_TYPE}_$(date +%Y%m%d_%H%M%S).log"
 
 echo "输入模型: ${MODEL_BASE_DIR}/${BASE_MODEL_NAME}"
@@ -68,12 +68,13 @@ echo "KV Cache量化: ${KV_CACHE_QUANT_TYPE}"
 echo "日志文件: ${QUANT_LOG}"
 echo ""
 
-# 执行量化（修复相对导入问题，使用模块方式执行）
-python -m tensorrt_edgellm.quantization.llm_quantization \
+# 执行量化（使用本地校准数据集，避免联网下载）
+cd "${BASE_DIR}" && PYTHONPATH="${BASE_DIR}" python tensorrt_edgellm/scripts/quantize_llm.py \
     --model_dir "${MODEL_BASE_DIR}/${BASE_MODEL_NAME}" \
     --output_dir "${QUANT_OUTPUT_DIR}" \
     --quantization "${QUANT_TYPE}" \
-    --kv_cache_quantization "${KV_CACHE_QUANT_TYPE}" 2>&1 | tee "${QUANT_LOG}"
+    --kv_cache_quantization "${KV_CACHE_QUANT_TYPE}" \
+    --dataset_dir "${BASE_DIR}/calib_dataset" 2>&1 | tee "${QUANT_LOG}"
 
 # 检查执行结果
 if [[ ${PIPESTATUS[0]} -ne 0 ]]; then
@@ -106,14 +107,12 @@ echo "最大输出长度: ${MAX_OUTPUT_LEN}"
 echo "日志文件: ${BASE_ENGINE_LOG}"
 echo ""
 
-# 执行引擎导出
-python tensorrt_edgellm/scripts/export_llm.py \
+# 执行引擎导出（修复相对导入问题，使用正确参数）
+cd "${BASE_DIR}" && PYTHONPATH="${BASE_DIR}" python -m tensorrt_edgellm.scripts.export_llm \
     --model_dir "${QUANT_OUTPUT_DIR}" \
     --output_dir "${BASE_ENGINE_DIR}" \
-    --eagle_enable "${EAGLE_ENABLE}" \
-    --max_batch_size "${MAX_BATCH_SIZE}" \
-    --max_input_len "${MAX_INPUT_LEN}" \
-    --max_output_len "${MAX_OUTPUT_LEN}" 2>&1 | tee "${BASE_ENGINE_LOG}"
+    $([[ "${EAGLE_ENABLE}" == "true" ]] && echo "--is_eagle_base") \
+    --fp8_kv_cache 2>&1 | tee "${BASE_ENGINE_LOG}"
 
 # 检查执行结果
 if [[ ${PIPESTATUS[0]} -ne 0 ]]; then
@@ -130,11 +129,12 @@ echo ""
 echo "✅ 基础模型引擎导出完成! 输出目录: ${BASE_ENGINE_DIR}"
 echo ""
 
-# ============== 步骤3: 导出Eagle草稿模型引擎 ==============
+# ============== 步骤3: 导出Eagle草稿模型引擎（可选） ==============
+if [[ "${EAGLE_ENABLE}" == "true" ]]; then
 echo "=================================================="
 echo "📌 步骤3/3: 导出${QUANT_TYPE} Eagle草稿模型引擎"
 echo "=================================================="
-DRAFT_ENGINE_DIR="${MODEL_BASE_DIR}/${DRAFT_MODEL_NAME}_${QUANT_TYPE}"
+DRAFT_ENGINE_DIR="${ENGINE_OUTPUT_DIR}/${DRAFT_MODEL_NAME}_${QUANT_TYPE}"
 DRAFT_ENGINE_LOG="${LOG_DIR}/export_draft_engine_$(date +%Y%m%d_%H%M%S).log"
 
 echo "基础模型: ${QUANT_OUTPUT_DIR}"
@@ -144,8 +144,8 @@ echo "量化类型: ${QUANT_TYPE}"
 echo "日志文件: ${DRAFT_ENGINE_LOG}"
 echo ""
 
-# 执行草稿模型引擎导出
-python tensorrt_edgellm/scripts/export_draft.py \
+# 执行草稿模型引擎导出（修复相对导入问题）
+cd "${BASE_DIR}" && PYTHONPATH="${BASE_DIR}" python -m tensorrt_edgellm.scripts.export_draft \
     --base_model_dir "${QUANT_OUTPUT_DIR}" \
     --draft_model_dir "${MODEL_BASE_DIR}/${DRAFT_MODEL_NAME}" \
     --output_dir "${DRAFT_ENGINE_DIR}" \
@@ -165,6 +165,12 @@ fi
 echo ""
 echo "✅ Eagle草稿模型引擎导出完成! 输出目录: ${DRAFT_ENGINE_DIR}"
 echo ""
+else
+echo "=================================================="
+echo "📌 步骤3/3: 跳过Eagle草稿模型引擎导出（EAGLE_ENABLE=false）"
+echo "=================================================="
+echo ""
+fi
 
 # ============== 执行完成 ==============
 echo "=================================================="

@@ -6,8 +6,8 @@ set -uo pipefail
 
 # ============== 配置参数 ==============
 BASE_DIR="/home/nvidia/work_dev/wqq/nfs/test_cc_dev/TensorRT-Edge-LLM"
-LOG_DIR="./logs"
-BACKUP_DIR="./backups/build_$(date +%Y%m%d_%H%M%S)"
+LOG_DIR="./output/logs"
+BACKUP_DIR="./output/backups/build_$(date +%Y%m%d_%H%M%S)"
 
 # 硬件平台配置 (默认为AGX Orin sm_87)
 # 支持选项: sm_70, sm_72, sm_75, sm_80, sm_86, sm_87, sm_89, sm_90, sm_100, sm_120, sm_121
@@ -56,15 +56,15 @@ echo "工作目录: ${BASE_DIR}"
 echo "目标GPU架构: ${GPU_ARCH}"
 echo ""
 
-# 创建目录
-mkdir -p "${LOG_DIR}" "${BACKUP_DIR}"
-BUILD_LOG="${LOG_DIR}/build_optimized_$(date +%Y%m%d_%H%M%S).log"
-
 # 检查并切换到工作目录
 cd "${BASE_DIR}" || {
     log_error "无法进入工作目录 ${BASE_DIR}"
     exit 1
 }
+
+# 创建目录
+mkdir -p "${LOG_DIR}" "${BACKUP_DIR}"
+BUILD_LOG="${LOG_DIR}/build_optimized_$(date +%Y%m%d_%H%M%S).log"
 
 log_info "初始化完成，日志文件: ${BUILD_LOG}"
 log_info "备份目录: ${BACKUP_DIR}"
