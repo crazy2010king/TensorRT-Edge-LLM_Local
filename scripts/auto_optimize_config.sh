@@ -41,6 +41,11 @@ detect_hardware() {
         GPU_NAME=$(nvidia-smi --query-gpu=name --format=csv,noheader | head -n1 | xargs)
         log_info "检测到GPU型号: ${GPU_NAME}"
 
+        # 获取GPU计算能力（必须先获取，显存检测需要使用GPU_ARCH变量）
+        GPU_COMPUTE_CAP=$(nvidia-smi --query-gpu=compute_cap --format=csv,noheader | head -n1 | tr -d '.' | awk '{print $1}')
+        GPU_ARCH="sm_${GPU_COMPUTE_CAP}"
+        log_info "检测到GPU计算能力: ${GPU_COMPUTE_CAP:0:1}.${GPU_COMPUTE_CAP:1} → GPU_ARCH=${GPU_ARCH}"
+
         # 获取GPU显存大小，适配Jetson/AGX Orin平台（Docker中nvidia-smi显存显示为N/A的问题）
         GPU_MEM=$(nvidia-smi --query-gpu=memory.total --format=csv,noheader | head -n1 | awk '{print $1 $2}' | grep -v "^\[")
 
@@ -71,11 +76,6 @@ detect_hardware() {
         fi
 
         log_info "检测到GPU显存: ${GPU_MEM}"
-
-        # 获取GPU计算能力
-        GPU_COMPUTE_CAP=$(nvidia-smi --query-gpu=compute_cap --format=csv,noheader | head -n1 | tr -d '.' | awk '{print $1}')
-        GPU_ARCH="sm_${GPU_COMPUTE_CAP}"
-        log_info "检测到GPU计算能力: ${GPU_COMPUTE_CAP:0:1}.${GPU_COMPUTE_CAP:1} → GPU_ARCH=${GPU_ARCH}"
     else
         log_warn "未检测到nvidia-smi，使用默认配置"
         GPU_NAME="Unknown GPU"
