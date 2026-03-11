@@ -226,14 +226,30 @@ def get_visual_calib_dataloader(
     return dataset
 
 
-def quantize_visual(model, precision, processor, dataset_dir="lmms-lab/MMMU"):
+def quantize_visual(model, precision, processor, dataset_dir="lmms-lab/MMMU", quantize_visual_module: bool = False):
+    """
+    Quantize visual model with optional visual module protection.
+
+    Args:
+        model: Visual model to quantize
+        precision: Quantization precision ("fp8", "int8", "none")
+        processor: Visual processor for data preprocessing
+        dataset_dir: Calibration dataset directory
+        quantize_visual_module: Whether to quantize visual module. If False, returns original model.
+    """
     assert isinstance(
         model, (Qwen3VLVisionModel, Qwen2_5_VisionTransformerPretrainedModel,
                 Qwen2VisionTransformerPretrainedModel, InternVLVisionModel,
                 Phi4MMVisionModel)), f"Invalid model type {type(model)}"
     assert precision in [
-        "fp8"
-    ], f"Only fp8(W8A8) is supported for visual model. You passed an unsupported precision: {precision}."
+        "fp8", "int8", "none"
+    ], f"Unsupported precision for visual model: {precision}. Supported: fp8, int8, none."
+
+    # Visual module protection: skip quantization if disabled
+    if not quantize_visual_module or precision == "none":
+        print(f"Visual module quantization disabled, returning original model")
+        return model
+
     assert "MMMU" in dataset_dir, f"Unsupported dataset name or local repo directory: {dataset_dir}."
 
     quant_config = mtq.FP8_DEFAULT_CFG.copy()

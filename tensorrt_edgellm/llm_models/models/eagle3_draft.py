@@ -91,10 +91,18 @@ class Eagle3DraftModel(nn.Module):
             self.fc = nn.Linear(config.target_hidden_size * 3,
                                 self.hidden_size,
                                 bias=bias)
+            # Gated fusion layer for better feature combination
+            self.fusion_gate = nn.Linear(self.hidden_size * 2,
+                                        self.hidden_size,
+                                        bias=bias)
         else:
             self.fc = nn.Linear(config.hidden_size * 3,
                                 self.hidden_size,
                                 bias=bias)
+            # Gated fusion layer for better feature combination
+            self.fusion_gate = nn.Linear(self.hidden_size * 2,
+                                        self.hidden_size,
+                                        bias=bias)
 
         self.embed_tokens = nn.Embedding(config.vocab_size,
                                          config.hidden_size,
@@ -143,12 +151,12 @@ class Eagle3DraftModel(nn.Module):
         past_key_values: List[torch.FloatTensor],
         rope_rotary_cos_sin: torch.Tensor,
         context_lengths: torch.Tensor,
-        last_token_ids: torch.Tensor,
         kvcache_start_index: torch.Tensor,
         hidden_states_from_base: torch.Tensor,
         hidden_states_from_draft: torch.Tensor,
         position_ids: torch.Tensor,
         attention_mask: torch.Tensor,
+        last_token_ids: Optional[torch.Tensor] = None,
     ) -> Tuple[torch.Tensor, torch.Tensor, Tuple[torch.Tensor, ...]]:
         """
         Forward pass of the EAGLE3 draft model.
@@ -169,13 +177,17 @@ class Eagle3DraftModel(nn.Module):
             (logits, hidden_states, present_key_values)
         """
 
-        # Fuse hidden states and combine with draft hidden states
-        hidden_states = self.fc(hidden_states_from_base)
+        # Fuse hidden states and combine with draft hidden states using gated fusion
+        fused_base_states = self.fc(hidden_states_from_base)
+        fused_base_states = torch.nn.functional.silu(fused_base_states)
 
         # TODO: WAR for INT4 ONNX export
         hidden_states_from_draft = hidden_states_from_draft.to(torch.float16)
-        hidden_states = hidden_states.to(torch.float16)
-        hidden_states = hidden_states_from_draft + hidden_states
+        fused_base_states = fused_base_states.to(torch.float16)
+
+        # Gated residual connection for better feature fusion
+        gate = torch.sigmoid(self.fusion_gate(torch.cat([fused_base_states, hidden_states_from_draft], dim=-1)))
+        hidden_states = gate * fused_base_states + (1 - gate) * hidden_states_from_draft
 
         present_key_values = ()
 
@@ -197,8 +209,11 @@ class Eagle3DraftModel(nn.Module):
             )
             present_key_values += (present_key_value, )
 
-        # Extract last token hidden states using custom_gather_nd to support batch dimensions
-        hidden_states = custom_gather_nd(hidden_states, last_token_ids, 1)
+        # Support both single last token extraction and full sequence output for tree decoding
+        if last_token_ids is not None:
+            # Extract last token hidden states using custom_gather_nd to support batch dimensions
+            hidden_states = custom_gather_nd(hidden_states, last_token_ids, 1)
+
         hidden_states_normed = self.norm(hidden_states)
         logits = self.lm_head(hidden_states_normed)
         logits = logits.to(torch.float32)
@@ -223,9 +238,13 @@ class Eagle3DraftModel(nn.Module):
         # Get input embeddings from input_ids
         inputs_embeds = self.embed_tokens(input_ids)
 
-        # Fuse hidden states and combine with draft hidden states
-        hidden_states = self.fc(hidden_states)
-        hidden_states = hidden_states_from_draft + hidden_states
+        # Fuse hidden states and combine with draft hidden states using gated fusion
+        fused_base_states = self.fc(hidden_states)
+        fused_base_states = torch.nn.functional.silu(fused_base_states)
+
+        # Gated residual connection for better feature fusion
+        gate = torch.sigmoid(self.fusion_gate(torch.cat([fused_base_states, hidden_states_from_draft], dim=-1)))
+        hidden_states = gate * fused_base_states + (1 - gate) * hidden_states_from_draft
 
         position_ids = torch.arange(0,
                                     input_ids.shape[1],
@@ -246,6 +265,99 @@ class Eagle3DraftModel(nn.Module):
         logits = self.lm_head(hidden_states_normed)
 
         return logits
+
+    def generate_draft_tokens(
+        self,
+        hidden_states_from_base: torch.Tensor,
+        input_ids: torch.Tensor,
+        past_key_values: Optional[List[torch.FloatTensor]] = None,
+        max_draft_length: int = 6,
+        confidence_threshold: float = 0.8,
+    ) -> Tuple[torch.Tensor, List[torch.Tensor]]:
+        """
+        Generate draft tokens using Tree Decoding for speculative decoding.
+
+        Args:
+            hidden_states_from_base: Hidden states from base model (batch_size, seq_len, hidden_size * 3)
+            input_ids: Current input token IDs (batch_size, seq_len)
+            past_key_values: Past KV cache for draft model
+            max_draft_length: Maximum number of draft tokens to generate
+            confidence_threshold: Threshold for early stopping based on token confidence
+
+        Returns:
+            (draft_tokens, present_key_values): Generated draft tokens and updated KV cache
+        """
+        batch_size = input_ids.shape[0]
+        draft_tokens = []
+        present_key_values = past_key_values if past_key_values is not None else []
+        current_hidden = hidden_states_from_base[:, -1:, :]
+        current_input_ids = input_ids[:, -1:]
+
+        # Initialize hidden states from draft
+        hidden_states_from_draft = torch.zeros(
+            (batch_size, 1, self.hidden_size),
+            dtype=hidden_states_from_base.dtype,
+            device=hidden_states_from_base.device
+        )
+
+        for step in range(max_draft_length):
+            # Forward pass for current step
+            if step == 0:
+                # First step uses base model hidden states
+                fused_states = self.fc(current_hidden)
+                fused_states = torch.nn.functional.silu(fused_states)
+                gate = torch.sigmoid(self.fusion_gate(torch.cat([fused_states, hidden_states_from_draft], dim=-1)))
+                hidden = gate * fused_states + (1 - gate) * hidden_states_from_draft
+            else:
+                # Subsequent steps use previous draft hidden states
+                inputs_embeds = self.embed_tokens(current_input_ids)
+                hidden = inputs_embeds + hidden_states_from_draft
+
+            # Process through decoder layers
+            for idx, decoder_layer in enumerate(self.layers):
+                past_kv = present_key_values[idx] if idx < len(present_key_values) else None
+                hidden, present_kv = decoder_layer(
+                    hidden_states=hidden,
+                    past_key_value=past_kv,
+                    # Simplified parameters for draft generation
+                    rope_rotary_cos_sin=None,
+                    context_lengths=None,
+                    inputs_embeds=None,
+                    attention_mask=None,
+                    position_ids=None,
+                    kvcache_start_index=None,
+                )
+                if idx >= len(present_key_values):
+                    present_key_values.append(present_kv)
+                else:
+                    present_key_values[idx] = present_kv
+
+            # Predict next token
+            hidden_normed = self.norm(hidden[:, -1:])
+            logits = self.lm_head(hidden_normed)
+            probs = torch.softmax(logits[:, -1, :], dim=-1)
+
+            # Get top token and confidence
+            conf, next_token = torch.topk(probs, k=1, dim=-1)
+
+            # Early stopping if confidence is too low
+            if conf.item() < confidence_threshold and step > 0:
+                break
+
+            draft_tokens.append(next_token)
+            current_input_ids = next_token
+            hidden_states_from_draft = hidden
+
+            # Stop if we reach max draft length
+            if len(draft_tokens) >= max_draft_length:
+                break
+
+        if draft_tokens:
+            draft_tokens = torch.cat(draft_tokens, dim=1)
+        else:
+            draft_tokens = torch.empty((batch_size, 0), dtype=torch.long, device=input_ids.device)
+
+        return draft_tokens, present_key_values
 
     @classmethod
     def from_pretrained(

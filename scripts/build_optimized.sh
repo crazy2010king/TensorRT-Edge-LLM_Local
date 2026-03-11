@@ -23,9 +23,9 @@ AUTO_OPTIMIZE_CONFIG="true"    # 检测完平台后自动优化test_config.yaml�
 # 编译参数
 BUILD_TYPE="Release"
 PARALLEL_JOBS="$(nproc)"
-# ARM平台默认关闭LTO，避免兼容性问题
+# AGX Orin(aarch64)支持LTO，开启获得更好性能
 if [[ "$(uname -m)" == "aarch64" ]]; then
-    ENABLE_LTO="false"
+    ENABLE_LTO="true"
 else
     ENABLE_LTO="true"
 fi

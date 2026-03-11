@@ -30,7 +30,7 @@ from datasets import load_dataset
 from modelopt.torch.export.quant_utils import get_quant_config
 from modelopt.torch.quantization.utils import is_quantized
 from torch.utils.data import DataLoader
-from transformers import (AutoModelForCausalLM, AutoModelForImageTextToText,
+from transformers import (AutoModelForCausalLM, AutoModelForVision2Seq as AutoModelForImageTextToText,
                           AutoTokenizer)
 
 from ..llm_models.model_utils import load_eagle3_draft_model, load_hf_model
@@ -131,6 +131,26 @@ MXFP8_LM_HEAD_CONFIG: Dict[str, Any] = {
     }
 }
 
+# LeptoFP8 quantization configuration for language model head.
+LEPTO_FP8_LM_HEAD_CONFIG: Dict[str, Any] = {
+    "quant_cfg": {
+        "*lm_head.input_quantizer": {
+            "num_bits": (4, 3),
+            "axis": None,
+            "auto_layer_scale": True
+        },
+        "*lm_head.weight_quantizer": {
+            "num_bits": (4, 3),
+            "axis": 0,
+            "block_sizes": {-1: 128},
+            "auto_layer_scale": True
+        },
+        "default": {
+            "enable": False
+        }
+    }
+}
+
 # Configuration to disable visual model quantization.
 DISABLE_VISUAL_CONFIG: Dict[str, Any] = {
     "quant_cfg": {
@@ -207,18 +227,19 @@ def get_llm_calib_dataloader(
 
 def get_llm_quant_config(
         quantization: Optional[str], lm_head_quantization: Optional[str],
-        kv_cache_quantization: Optional[str]) -> Dict[str, Any]:
+        kv_cache_quantization: Optional[str], smoothquant_alpha: float = 0.5) -> Dict[str, Any]:
     """
     Get quantization configuration for LLM models.
-    
+
     Args:
         quantization: Optional quantization method
         lm_head_quantization: Optional LM head quantization method
         kv_cache_quantization: Optional KV cache quantization method
-        
+        smoothquant_alpha: SmoothQuant alpha parameter (0.0-1.0), higher value means more smoothing for activations
+
     Returns:
         Dict containing quantization configuration
-        
+
     Raises:
         ValueError: If quantization method is not supported
     """
@@ -227,14 +248,50 @@ def get_llm_quant_config(
         quant_cfg = {"quant_cfg": {}, "algorithm": "max"}
     elif quantization == "fp8":
         quant_cfg = mtq.FP8_DEFAULT_CFG.copy()
+    elif quantization == "lepto_fp8":
+        # LeptoQuant enhanced FP8 quantization with AutoLayerScale
+        quant_cfg = mtq.FP8_DEFAULT_CFG.copy()
+        # Enable AutoLayerScale for better precision
+        quant_cfg["quant_cfg"]["default"]["auto_layer_scale"] = True
+        # Optimize weight quantization granularity
+        for key in quant_cfg["quant_cfg"]:
+            if "weight_quantizer" in key and isinstance(quant_cfg["quant_cfg"][key], dict):
+                quant_cfg["quant_cfg"][key]["axis"] = 0
+                quant_cfg["quant_cfg"][key]["block_sizes"] = {-1: 128}
     elif quantization == "int4_awq":
         quant_cfg = mtq.INT4_AWQ_CFG.copy()
+    elif quantization == "w4a8":
+        # W4A8 mixed precision quantization: Weight INT4, Activation INT8
+        quant_cfg = {
+            "quant_cfg": {
+                "*weight_quantizer": {
+                    "num_bits": 4,
+                    "block_sizes": {-1: 128},
+                    "enable": True,
+                    "type": "weight_only"
+                },
+                "*input_quantizer": {
+                    "num_bits": 8,
+                    "enable": True,
+                    "axis": None
+                },
+                "*lm_head.*": {
+                    "enable": False
+                },
+                "default": {
+                    "enable": False
+                }
+            },
+            "algorithm": "max"
+        }
     elif quantization == "nvfp4":
         quant_cfg = mtq.NVFP4_DEFAULT_CFG.copy()
     elif quantization == "mxfp8":
         quant_cfg = mtq.MXFP8_DEFAULT_CFG.copy()
     elif quantization == "int8_sq":
         quant_cfg = mtq.INT8_SMOOTHQUANT_CFG.copy()
+        # Set SmoothQuant alpha parameter
+        quant_cfg["alpha"] = smoothquant_alpha
     else:
         raise ValueError(f"Unsupported quantization: {quantization}")
 
@@ -248,6 +305,8 @@ def get_llm_quant_config(
 
         if lm_head_quantization == "fp8":
             quant_cfg["quant_cfg"].update(FP8_LM_HEAD_CONFIG["quant_cfg"])
+        elif lm_head_quantization == "lepto_fp8":
+            quant_cfg["quant_cfg"].update(LEPTO_FP8_LM_HEAD_CONFIG["quant_cfg"])
         elif lm_head_quantization == "nvfp4":
             quant_cfg["quant_cfg"].update(NVFP4_LM_HEAD_CONFIG["quant_cfg"])
         elif lm_head_quantization == "mxfp8":
@@ -274,6 +333,7 @@ def quantize_llm(
     quantization: Optional[str],
     lm_head_quantization: Optional[str],
     kv_cache_quantization: Optional[str],
+    smoothquant_alpha: float = 0.5,
 ) -> Union[AutoModelForCausalLM, AutoModelForImageTextToText]:
     """
     Quantize a language model using the specified quantization method.
@@ -284,6 +344,7 @@ def quantize_llm(
         quantization: Quantization method ("fp8", "int4_awq", "nvfp4")
         dataset_dir: Dataset for calibration
         lm_head_quantization: Optional LM head quantization method
+        smoothquant_alpha: SmoothQuant alpha parameter (0.0-1.0), default 0.5
         
     Returns:
         Quantized model
@@ -294,9 +355,9 @@ def quantize_llm(
     assert (quantization is not None) or (lm_head_quantization is not None) or (kv_cache_quantization is not None), \
         "At least one of 'quantization', 'lm_head_quantization', or 'kv_cache_quantization' must be set (not all None)."
     assert quantization in [
-        None, "fp8", "int4_awq", "nvfp4", "mxfp8", "int8_sq"
+        None, "fp8", "lepto_fp8", "int4_awq", "w4a8", "nvfp4", "mxfp8", "int8_sq"
     ]
-    assert lm_head_quantization in [None, "fp8", "nvfp4", "mxfp8"]
+    assert lm_head_quantization in [None, "fp8", "lepto_fp8", "nvfp4", "mxfp8"]
     assert kv_cache_quantization in [None, "fp8"]
 
     # Get calibration dataloader
@@ -310,7 +371,7 @@ def quantize_llm(
                                            num_samples=512,
                                            max_length=512)
     quant_config = get_llm_quant_config(quantization, lm_head_quantization,
-                                        kv_cache_quantization)
+                                        kv_cache_quantization, smoothquant_alpha)
     model = quantize_model(model, quant_config, data_loader)
 
     return model
@@ -324,6 +385,7 @@ def quantize_draft(
     dataset_dir: str,
     lm_head_quantization: Optional[str],
     kv_cache_quantization: Optional[str],
+    smoothquant_alpha: float = 0.5,
 ) -> Union[Eagle3DraftModel]:
     """
     Quantize a language model using the specified quantization method.
@@ -343,8 +405,8 @@ def quantize_draft(
     Raises:
         AssertionError: If quantization method is not supported
     """
-    assert quantization in ["fp8", "int4_awq", "nvfp4", "int8_sq", "mxfp8"]
-    assert lm_head_quantization in [None, "fp8", "nvfp4", "mxfp8"]
+    assert quantization in ["fp8", "lepto_fp8", "int4_awq", "w4a8", "nvfp4", "int8_sq", "mxfp8"]
+    assert lm_head_quantization in [None, "fp8", "lepto_fp8", "nvfp4", "mxfp8"]
     assert kv_cache_quantization in [None, "fp8"]
 
     # Get calibration dataloader
@@ -358,7 +420,7 @@ def quantize_draft(
                                            num_samples=512,
                                            max_length=512)
     quant_config = get_llm_quant_config(quantization, lm_head_quantization,
-                                        kv_cache_quantization)
+                                        kv_cache_quantization, smoothquant_alpha)
     model = quantize_draft_model(base_model, draft_model, quant_config,
                                  data_loader)
 
@@ -372,6 +434,7 @@ def quantize_and_save_llm(model_dir: str,
                           dataset_dir: str = "cnn_dailymail",
                           lm_head_quantization: Optional[str] = None,
                           kv_cache_quantization: Optional[str] = None,
+                          smoothquant_alpha: float = 0.5,
                           device: str = "cuda") -> None:
     """
     Load a model, quantize it if specified, and save the result.
@@ -382,10 +445,12 @@ def quantize_and_save_llm(model_dir: str,
     Args:
         model_dir: Directory containing the input HuggingFace model
         output_dir: Directory to save the quantized model
-        quantization: Quantization method to apply (None, "fp8", "int4_awq", "nvfp4", "int8_sq", "mxfp8")
+        quantization: Quantization method to apply (None, "fp8", "lepto_fp8", "int4_awq", "nvfp4", "int8_sq", "mxfp8")
         dtype: Model data type for loading ("fp16")
         dataset_dir: Dataset name or path for calibration data
         lm_head_quantization: Optional separate quantization for language model head (only "fp8", "nvfp4", and "mxfp8" are currently supported)
+        kv_cache_quantization: Optional separate quantization for KV cache (only "fp8" is currently supported)
+        smoothquant_alpha: SmoothQuant alpha parameter (0.0-1.0), default 0.5. Higher value reduces activation quantization error but increases weight quantization error.
         device: Device to use for model loading and quantization ("cuda", "cpu")
         
     Raises:
@@ -399,7 +464,7 @@ def quantize_and_save_llm(model_dir: str,
         print(f"Model is already quantized, skipping quantization.")
     else:
         model = quantize_llm(model, tokenizer, dataset_dir, quantization,
-                             lm_head_quantization, kv_cache_quantization)
+                             lm_head_quantization, kv_cache_quantization, smoothquant_alpha)
 
     quant_end_time = time.time()
     print(f"Quantization finished in {quant_end_time - start_time}s.")
@@ -435,6 +500,7 @@ def quantize_and_save_draft(
     dataset_dir: str = "cnn_dailymail",
     lm_head_quantization: Optional[str] = None,
     kv_cache_quantization: Optional[str] = None,
+    smoothquant_alpha: float = 0.5,
 ) -> None:
     """
     Load an EAGLE draft model, quantize it if specified, and save the result.
@@ -446,7 +512,7 @@ def quantize_and_save_draft(
         base_model_dir: Directory containing the base HuggingFace model
         draft_model_dir: Directory containing the EAGLE draft model
         output_dir: Directory to save the quantized model
-        quantization: Quantization method to apply (None, "fp8", "int4_awq", "nvfp4", "int8_sq", "mxfp8")
+        quantization: Quantization method to apply (None, "fp8", "lepto_fp8", "int4_awq", "nvfp4", "int8_sq", "mxfp8")
         device: Device to use for model loading and quantization ("cuda", "cpu")
         dtype: Model data type for loading ("fp16")
         dataset_dir: Dataset name or path for calibration data
@@ -468,7 +534,8 @@ def quantize_and_save_draft(
         draft_model = quantize_draft(base_model, draft_model, tokenizer,
                                      quantization, dataset_dir,
                                      lm_head_quantization,
-                                     kv_cache_quantization)
+                                     kv_cache_quantization,
+                                     smoothquant_alpha)
     quant_end_time = time.time()
     print(f"Quantization finished in {quant_end_time - start_time}s.")
 

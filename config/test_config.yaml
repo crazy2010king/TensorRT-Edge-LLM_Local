@@ -1,7 +1,7 @@
 # Test Configuration for Qwen3-VL-2B-Instruct Performance Test
 # TensorRT Edge-LLM Test Suite
 # 自动优化生成，适配平台: NVIDIA AGX Orin
-# 生成时间: Mon Mar  9 11:42:32 AM UTC 2026
+# 生成时间: Tue Mar 10 01:13:55 AM UTC 2026
 
 # Device configuration
 device:
