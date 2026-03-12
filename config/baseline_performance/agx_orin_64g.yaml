@@ -1,0 +1,50 @@
+# AGX Orin 64GB 性能基线配置
+device: "agx_orin_64g"
+description: "NVIDIA Jetson AGX Orin 64GB 性能基线"
+
+models:
+  # Qwen3-VL-2B 模型基线
+  qwen3-vl-2b:
+    fp16:
+      min_throughput_tps: 8.0
+      max_latency_ms: 125.0
+      max_memory_mb: 12000
+      max_accuracy_loss: 0.0
+    fp8:
+      min_throughput_tps: 12.0
+      max_latency_ms: 83.0
+      max_memory_mb: 8000
+      max_accuracy_loss: 1.0
+    fp8_lepto:
+      min_throughput_tps: 15.0
+      max_latency_ms: 67.0
+      max_memory_mb: 7500
+      max_accuracy_loss: 1.5
+    fp8_eagle3:
+      min_throughput_tps: 25.0
+      max_latency_ms: 40.0
+      max_memory_mb: 8500
+      max_accuracy_loss: 2.0
+    int4_awq:
+      min_throughput_tps: 20.0
+      max_latency_ms: 50.0
+      max_memory_mb: 5000
+      max_accuracy_loss: 2.0
+    int4_awq_eagle3:
+      min_throughput_tps: 35.0
+      max_latency_ms: 28.0
+      max_memory_mb: 5500
+      max_accuracy_loss: 2.0
+
+  # Llama3-7B 模型基线
+  llama3-7b:
+    fp8:
+      min_throughput_tps: 6.0
+      max_latency_ms: 167.0
+      max_memory_mb: 15000
+      max_accuracy_loss: 1.0
+    int4_awq:
+      min_throughput_tps: 12.0
+      max_latency_ms: 83.0
+      max_memory_mb: 8000
+      max_accuracy_loss: 2.0

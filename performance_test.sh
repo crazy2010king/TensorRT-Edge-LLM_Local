@@ -12,6 +12,11 @@ TEST_RUNS=10
 OUTPUT_DIR="results"
 TEST_SUITE="all"
 VERBOSE=false
+ENGINE_PATH=""
+DEVICE_TYPE=""
+JSON_REPORT_PATH=""
+ENABLE_QUALITY_GATE=false
+BASELINE_CONFIG_PATH="config/baseline_performance"
 
 # Print help message
 print_help() {
@@ -24,6 +29,10 @@ print_help() {
     echo "  -r, --runs NUM          Number of test runs per test case (default: 10)"
     echo "  -o, --output-dir DIR    Output directory for results (default: results)"
     echo "  -t, --test-suite NAME   Test suite to run: all, basic, edge, model, engineering (default: all)"
+    echo "  -e, --engine PATH       Path to TensorRT engine file (required for standalone test)"
+    echo "  -d, --device TYPE       Device type: agx_orin_32g, agx_orin_64g, orin_nx_8g, orin_nx_16g, drive_thor"
+    echo "  --output PATH           Path to output JSON performance report"
+    echo "  --enable-quality-gate   Enable performance quality gate (fail if performance below baseline)"
     echo "  -v, --verbose           Enable verbose output"
     echo "  -h, --help              Print this help message"
     echo
@@ -52,6 +61,22 @@ while [[ $# -gt 0 ]]; do
             TEST_SUITE="$2"
             shift 2
             ;;
+        -e|--engine)
+            ENGINE_PATH="$2"
+            shift 2
+            ;;
+        -d|--device)
+            DEVICE_TYPE="$2"
+            shift 2
+            ;;
+        --output)
+            JSON_REPORT_PATH="$2"
+            shift 2
+            ;;
+        --enable-quality-gate)
+            ENABLE_QUALITY_GATE=true
+            shift
+            ;;
         -v|--verbose)
             VERBOSE=true
             shift
@@ -67,6 +92,10 @@ while [[ $# -gt 0 ]]; do
             ;;
     esac
 done
+
+# Export new configuration variables
+export TEST_ENGINE_PATH="$ENGINE_PATH"
+export TEST_DEVICE_TYPE="$DEVICE_TYPE"
 
 # Export configuration variables
 export TEST_CONFIG_FILE="$CONFIG_FILE"
@@ -208,6 +237,27 @@ if [[ $REPORT_EXIT_CODE -ne 0 ]]; then
     echo "Raw test data is still available in: $OUTPUT_DIR/raw_data/$TEST_ID/"
 else
     echo "Report generated successfully"
+fi
+
+# Step 5: Quality gate check (if enabled)
+if [[ "$ENABLE_QUALITY_GATE" == true && -n "$DEVICE_TYPE" ]]; then
+    echo -e "\n=== Step 5: Performance Quality Gate Check ==="
+    if python3 tools/optimize/check_performance_baseline.py \
+        --device "$DEVICE_TYPE" \
+        --report "$OUTPUT_DIR/reports/$TEST_ID/performance_summary.json" \
+        --fail-on-violation; then
+        echo "✅ Quality gate passed"
+    else
+        echo "❌ Quality gate failed: Performance below baseline thresholds"
+        exit 1
+    fi
+fi
+
+# Export JSON report if requested
+if [[ -n "$JSON_REPORT_PATH" ]]; then
+    echo -e "\n=== Exporting JSON Performance Report ==="
+    cp "$OUTPUT_DIR/reports/$TEST_ID/performance_summary.json" "$JSON_REPORT_PATH"
+    echo "Report exported to: $JSON_REPORT_PATH"
 fi
 
 echo
