@@ -160,6 +160,45 @@ DISABLE_VISUAL_CONFIG: Dict[str, Any] = {
     }
 }
 
+# Configuration to protect visual model quantization (only quantize specific layers)
+PROTECT_VISUAL_CONFIG: Dict[str, Any] = {
+    "quant_cfg": {
+        # Disable quantization for visual embedding and first 2 layers to preserve accuracy
+        "*visual.embeddings*": {"enable": False},
+        "*visual.encoder.layers.0*": {"enable": False},
+        "*visual.encoder.layers.1*": {"enable": False},
+        # Allow quantization for other visual layers
+        "*visual.encoder.layers.*": {"enable": True},
+    }
+}
+
+# LeptoQuant enhanced FP8 quantization configuration
+LEPTOQUANT_FP8_CONFIG: Dict[str, Any] = {
+    "algorithm": "max",
+    "quant_cfg": {
+        "*weight_quantizer": {
+            "num_bits": (4, 3),
+            "axis": -1,
+            "calibrator": "max",
+            "enable": True
+        },
+        "*input_quantizer": {
+            "num_bits": (4, 3),
+            "axis": None,
+            "calibrator": "lepto",
+            "enable": True
+        },
+        "*bmm_quantizer": {
+            "num_bits": (4, 3),
+            "axis": None,
+            "enable": True
+        },
+        "default": {
+            "enable": False
+        }
+    }
+}
+
 # Already merged the vision LoRA and audio is currently not supported, so disable them.
 DISABLE_Phi4MM_VISUAL_AUDIO_CONFIG: Dict[str, Any] = {
     "quant_cfg": {
@@ -227,7 +266,9 @@ def get_llm_calib_dataloader(
 
 def get_llm_quant_config(
         quantization: Optional[str], lm_head_quantization: Optional[str],
-        kv_cache_quantization: Optional[str], smoothquant_alpha: float = 0.5) -> Dict[str, Any]:
+        kv_cache_quantization: Optional[str],
+        smoothquant_alpha: float = 0.5,
+        protect_visual_quantization: bool = False) -> Dict[str, Any]:
     """
     Get quantization configuration for LLM models.
 
@@ -236,6 +277,7 @@ def get_llm_quant_config(
         lm_head_quantization: Optional LM head quantization method
         kv_cache_quantization: Optional KV cache quantization method
         smoothquant_alpha: SmoothQuant alpha parameter (0.0-1.0), higher value means more smoothing for activations
+        protect_visual_quantization: Whether to protect visual layers from full quantization
 
     Returns:
         Dict containing quantization configuration
@@ -248,16 +290,21 @@ def get_llm_quant_config(
         quant_cfg = {"quant_cfg": {}, "algorithm": "max"}
     elif quantization == "fp8":
         quant_cfg = mtq.FP8_DEFAULT_CFG.copy()
-    elif quantization == "lepto_fp8":
-        # LeptoQuant enhanced FP8 quantization with AutoLayerScale
-        quant_cfg = mtq.FP8_DEFAULT_CFG.copy()
-        # Enable AutoLayerScale for better precision
-        quant_cfg["quant_cfg"]["default"]["auto_layer_scale"] = True
-        # Optimize weight quantization granularity
-        for key in quant_cfg["quant_cfg"]:
-            if "weight_quantizer" in key and isinstance(quant_cfg["quant_cfg"][key], dict):
-                quant_cfg["quant_cfg"][key]["axis"] = 0
-                quant_cfg["quant_cfg"][key]["block_sizes"] = {-1: 128}
+    elif quantization == "lepto_fp8" or quantization == "fp8_lepto":
+        # Support both naming conventions for LeptoQuant FP8
+        if quantization == "lepto_fp8":
+            # LeptoQuant enhanced FP8 quantization with AutoLayerScale (remote version)
+            quant_cfg = mtq.FP8_DEFAULT_CFG.copy()
+            # Enable AutoLayerScale for better precision
+            quant_cfg["quant_cfg"]["default"]["auto_layer_scale"] = True
+            # Optimize weight quantization granularity
+            for key in quant_cfg["quant_cfg"]:
+                if "weight_quantizer" in key and isinstance(quant_cfg["quant_cfg"][key], dict):
+                    quant_cfg["quant_cfg"][key]["axis"] = 0
+                    quant_cfg["quant_cfg"][key]["block_sizes"] = {-1: 128}
+        else:
+            # LeptoQuant enhanced FP8 with lepto calibrator (local version)
+            quant_cfg = LEPTOQUANT_FP8_CONFIG.copy()
     elif quantization == "int4_awq":
         quant_cfg = mtq.INT4_AWQ_CFG.copy()
     elif quantization == "w4a8":
@@ -292,6 +339,48 @@ def get_llm_quant_config(
         quant_cfg = mtq.INT8_SMOOTHQUANT_CFG.copy()
         # Set SmoothQuant alpha parameter
         quant_cfg["alpha"] = smoothquant_alpha
+    elif quantization == "2bit_tequila":
+        # Tequila 2bit ternary quantization
+        quant_cfg = {
+            "algorithm": "max",
+            "quant_cfg": {
+                "*weight_quantizer": {
+                    "num_bits": 2,
+                    "type": "ternary",
+                    "axis": -1,
+                    "group_size": 128,
+                    "enable": True
+                },
+                "*input_quantizer": {
+                    "num_bits": 8,
+                    "enable": False  # Keep activations in FP16
+                },
+                "default": {
+                    "enable": False
+                }
+            }
+        }
+    elif quantization == "1.25bit_sherry":
+        # Sherry 1.25bit quantization
+        quant_cfg = {
+            "algorithm": "max",
+            "quant_cfg": {
+                "*weight_quantizer": {
+                    "num_bits": 1.25,
+                    "type": "symmetric",
+                    "axis": -1,
+                    "group_size": 256,
+                    "enable": True
+                },
+                "*input_quantizer": {
+                    "num_bits": 8,
+                    "enable": False  # Keep activations in FP16
+                },
+                "default": {
+                    "enable": False
+                }
+            }
+        }
     else:
         raise ValueError(f"Unsupported quantization: {quantization}")
 
@@ -317,8 +406,13 @@ def get_llm_quant_config(
         if kv_cache_quantization == "fp8":
             quant_cfg["quant_cfg"].update(mtq.FP8_KV_CFG["quant_cfg"])
 
-    # Disable visual model
-    quant_cfg["quant_cfg"].update(DISABLE_VISUAL_CONFIG["quant_cfg"])
+    # Handle visual model quantization
+    if protect_visual_quantization:
+        # Protect sensitive visual layers while allowing quantization of others
+        quant_cfg["quant_cfg"].update(PROTECT_VISUAL_CONFIG["quant_cfg"])
+    else:
+        # Disable visual model quantization entirely
+        quant_cfg["quant_cfg"].update(DISABLE_VISUAL_CONFIG["quant_cfg"])
 
     # Disable vision and audio models in Phi-4MM
     quant_cfg["quant_cfg"].update(
@@ -334,10 +428,11 @@ def quantize_llm(
     lm_head_quantization: Optional[str],
     kv_cache_quantization: Optional[str],
     smoothquant_alpha: float = 0.5,
+    protect_visual_quantization: bool = False,
 ) -> Union[AutoModelForCausalLM, AutoModelForImageTextToText]:
     """
     Quantize a language model using the specified quantization method.
-    
+
     Args:
         model: The model to quantize (causal LM or image-text model)
         tokenizer: Tokenizer for text processing
@@ -345,6 +440,7 @@ def quantize_llm(
         dataset_dir: Dataset for calibration
         lm_head_quantization: Optional LM head quantization method
         smoothquant_alpha: SmoothQuant alpha parameter (0.0-1.0), default 0.5
+        protect_visual_quantization: Whether to protect visual layers from full quantization
         
     Returns:
         Quantized model
@@ -355,7 +451,8 @@ def quantize_llm(
     assert (quantization is not None) or (lm_head_quantization is not None) or (kv_cache_quantization is not None), \
         "At least one of 'quantization', 'lm_head_quantization', or 'kv_cache_quantization' must be set (not all None)."
     assert quantization in [
-        None, "fp8", "lepto_fp8", "int4_awq", "w4a8", "nvfp4", "mxfp8", "int8_sq"
+        None, "fp8", "lepto_fp8", "fp8_lepto", "int4_awq", "w4a8", "nvfp4", "mxfp8", "int8_sq",
+        "2bit_tequila", "1.25bit_sherry"
     ]
     assert lm_head_quantization in [None, "fp8", "lepto_fp8", "nvfp4", "mxfp8"]
     assert kv_cache_quantization in [None, "fp8"]
@@ -371,7 +468,7 @@ def quantize_llm(
                                            num_samples=512,
                                            max_length=512)
     quant_config = get_llm_quant_config(quantization, lm_head_quantization,
-                                        kv_cache_quantization, smoothquant_alpha)
+                                        kv_cache_quantization, smoothquant_alpha, protect_visual_quantization)
     model = quantize_model(model, quant_config, data_loader)
 
     return model
@@ -386,6 +483,7 @@ def quantize_draft(
     lm_head_quantization: Optional[str],
     kv_cache_quantization: Optional[str],
     smoothquant_alpha: float = 0.5,
+    protect_visual_quantization: bool = False,
 ) -> Union[Eagle3DraftModel]:
     """
     Quantize a language model using the specified quantization method.
@@ -405,7 +503,8 @@ def quantize_draft(
     Raises:
         AssertionError: If quantization method is not supported
     """
-    assert quantization in ["fp8", "lepto_fp8", "int4_awq", "w4a8", "nvfp4", "int8_sq", "mxfp8"]
+    assert quantization in ["fp8", "lepto_fp8", "fp8_lepto", "int4_awq", "w4a8", "nvfp4", "int8_sq", "mxfp8",
+                            "2bit_tequila", "1.25bit_sherry"]
     assert lm_head_quantization in [None, "fp8", "lepto_fp8", "nvfp4", "mxfp8"]
     assert kv_cache_quantization in [None, "fp8"]
 
@@ -420,7 +519,7 @@ def quantize_draft(
                                            num_samples=512,
                                            max_length=512)
     quant_config = get_llm_quant_config(quantization, lm_head_quantization,
-                                        kv_cache_quantization, smoothquant_alpha)
+                                        kv_cache_quantization, smoothquant_alpha, protect_visual_quantization)
     model = quantize_draft_model(base_model, draft_model, quant_config,
                                  data_loader)
 
@@ -435,6 +534,7 @@ def quantize_and_save_llm(model_dir: str,
                           lm_head_quantization: Optional[str] = None,
                           kv_cache_quantization: Optional[str] = None,
                           smoothquant_alpha: float = 0.5,
+                          protect_visual_quantization: bool = False,
                           device: str = "cuda") -> None:
     """
     Load a model, quantize it if specified, and save the result.
@@ -464,7 +564,7 @@ def quantize_and_save_llm(model_dir: str,
         print(f"Model is already quantized, skipping quantization.")
     else:
         model = quantize_llm(model, tokenizer, dataset_dir, quantization,
-                             lm_head_quantization, kv_cache_quantization, smoothquant_alpha)
+                             lm_head_quantization, kv_cache_quantization, smoothquant_alpha, protect_visual_quantization)
 
     quant_end_time = time.time()
     print(f"Quantization finished in {quant_end_time - start_time}s.")
@@ -501,6 +601,7 @@ def quantize_and_save_draft(
     lm_head_quantization: Optional[str] = None,
     kv_cache_quantization: Optional[str] = None,
     smoothquant_alpha: float = 0.5,
+    protect_visual_quantization: bool = False,
 ) -> None:
     """
     Load an EAGLE draft model, quantize it if specified, and save the result.
@@ -535,7 +636,8 @@ def quantize_and_save_draft(
                                      quantization, dataset_dir,
                                      lm_head_quantization,
                                      kv_cache_quantization,
-                                     smoothquant_alpha)
+                                     smoothquant_alpha,
+                                     protect_visual_quantization)
     quant_end_time = time.time()
     print(f"Quantization finished in {quant_end_time - start_time}s.")
 
