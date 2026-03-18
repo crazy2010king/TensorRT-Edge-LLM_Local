@@ -16,6 +16,11 @@ SUPPORTED_QUANTIZATION_SCHEMES = [
 
 def run_command(cmd, cwd=None, env=None):
     """执行命令并返回结果"""
+    # 添加当前目录到PYTHONPATH
+    if env is None:
+        env = os.environ.copy()
+    env['PYTHONPATH'] = f"{os.getcwd()}:{env.get('PYTHONPATH', '')}"
+
     print(f"[执行命令] {cmd}")
     result = subprocess.run(cmd, shell=True, capture_output=True, text=True, cwd=cwd, env=env)
     if result.returncode != 0:
@@ -51,12 +56,12 @@ def main():
 
     # 步骤1: 执行量化
     print("\n=== 步骤1: 执行量化 ===")
-    quant_cmd = f"python3 quantize.py --model {args.model} --quant {args.quantization} --output {output_dir / 'quantized_model'}"
+    quant_cmd = f"python3 tensorrt_edgellm/scripts/quantize_llm.py --model {args.model} --quant {args.quantization} --output {output_dir / 'quantized_model'}"
     run_command(quant_cmd, cwd="/mnt/test_cc_dev/git_source/TensorRT-Edge-LLM_Local")
 
     # 步骤2: 导出ONNX模型
     print("\n=== 步骤2: 导出ONNX模型 ===")
-    export_cmd = f"python3 export_onnx.py --model {output_dir / 'quantized_model'} --output {onnx_output_path}"
+    export_cmd = f"python3 tensorrt_edgellm/scripts/export_llm.py --model {output_dir / 'quantized_model'} --output {onnx_output_path}"
     if args.quantization in ["int4_awq", "int4_gptq", "2bit", "1.25bit"]:
         export_cmd += " --enable-weight-only-quant"
     run_command(export_cmd, cwd="/mnt/test_cc_dev/git_source/TensorRT-Edge-LLM_Local")
